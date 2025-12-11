@@ -21,23 +21,24 @@ jobs:
 
       - name: Check C++ formatting
         run: |
-          # Honor configured line length by regenerating .clang-format if desired
-          if [ -f .clang-format ]; then
-            echo "Using existing .clang-format"
-          else
+          # Create .clang-format if missing, respecting env var.
+          # If .clang-format exists (e.g. checked in), we use it as is.
+          if [ ! -f .clang-format ]; then
+            echo "Generating .clang-format with ColumnLimit: ${CXX_LINE_LENGTH}"
             cat > .clang-format <<EOF
-BasedOnStyle: Google
-IndentWidth: 4
-ColumnLimit: ${CXX_LINE_LENGTH}
-EOF
-          fi
-          # Diff-only check; fail if any file would be reformatted
-          files=$(git ls-files '*.cc' '*.cpp' '*.cxx' '*.c' '*.h' '*.hpp' '*.hh' '*.hxx')
-          if [ -n "$files" ]; then
-            clang-format --dry-run --Werror $files
+          BasedOnStyle: Google
+          IndentWidth: 4
+          ColumnLimit: ${CXX_LINE_LENGTH}
+          EOF
           else
-            echo "No C/C++ files to check."
+            echo "Using existing .clang-format"
           fi
+
+          # Run clang-format on all tracked C/C++ files.
+          # -z/-0 handles filenames with spaces safely.
+          # -r prevents running if no files are found.
+          git ls-files -z '*.cc' '*.cpp' '*.cxx' '*.c' '*.h' '*.hpp' '*.hh' '*.hxx' \
+            | xargs -0 -r clang-format --dry-run --Werror
 
   python-style:
     name: Python Codestyle
@@ -56,11 +57,13 @@ EOF
 
       - name: Lint Python (respecting line length)
         run: |
-          # If pyproject.toml or ruff.toml exists, ruff will use it;
-          # otherwise fall back to the env-configured line length.
+          # If pyproject.toml or ruff.toml exists, ruff uses it automatically.
+          # Otherwise, we force the line length from the env var.
           if [ -f pyproject.toml ] || [ -f ruff.toml ]; then
+            echo "Using configuration from pyproject.toml/ruff.toml"
             ruff check .
           else
+            echo "Using command-line line-length: ${PY_LINE_LENGTH}"
             ruff check . --line-length ${PY_LINE_LENGTH}
           fi
 
@@ -83,5 +86,3 @@ EOF
 
       - name: Bazel test
         run: bazel test //...
-
-
