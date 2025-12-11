@@ -3,10 +3,11 @@
 namespace mock {
 
 class Mock {
- private:
+   private:
     std::string data_;
- public:
-    explicit Mock(std::string data): data_(data) {}
+
+   public:
+    explicit Mock(std::string data) : data_(data) {}
     std::string Get() const;
 };
 
