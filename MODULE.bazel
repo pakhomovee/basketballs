@@ -1,0 +1,16 @@
+module(
+    name = "basketballs",
+    version = "0.1.0",
+)
+
+bazel_dep(name = "googletest", version = "1.17.0")
+bazel_dep(name = "rules_cc", version = "0.2.0")
+
+bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
+git_override(
+    module_name = "hedron_compile_commands",
+    commit = "4f28899228fb3ad0126897876f147ca15026151e",
+    remote = "https://github.com/hedronvision/bazel-compile-commands-extractor.git",
+    # Replace the commit hash (above) with the latest (https://github.com/hedronvision/bazel-compile-commands-extractor/commits/main).
+    # Even better, set up Renovate and let it do the work for you (see "Suggestion: Updates" in the README).
+)

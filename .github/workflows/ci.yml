@@ -1,0 +1,87 @@
+name: CI
+
+on: [push, pull_request]
+
+env:
+  # Changeable formatting parameters
+  CXX_LINE_LENGTH: "100"
+  PY_LINE_LENGTH: "100"
+  BAZEL_VERSION: "7.0.0"
+
+jobs:
+  cpp-style:
+    name: C++ Codestyle (clang-format)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+
+      - name: Check C++ formatting
+        run: |
+          # Honor configured line length by regenerating .clang-format if desired
+          if [ -f .clang-format ]; then
+            echo "Using existing .clang-format"
+          else
+            cat > .clang-format <<EOF
+BasedOnStyle: Google
+IndentWidth: 4
+ColumnLimit: ${CXX_LINE_LENGTH}
+EOF
+          fi
+          # Diff-only check; fail if any file would be reformatted
+          files=$(git ls-files '*.cc' '*.cpp' '*.cxx' '*.c' '*.h' '*.hpp' '*.hh' '*.hxx')
+          if [ -n "$files" ]; then
+            clang-format --dry-run --Werror $files
+          else
+            echo "No C/C++ files to check."
+          fi
+
+  python-style:
+    name: Python Codestyle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint Python (respecting line length)
+        run: |
+          # If pyproject.toml or ruff.toml exists, ruff will use it;
+          # otherwise fall back to the env-configured line length.
+          if [ -f pyproject.toml ] || [ -f ruff.toml ]; then
+            ruff check .
+          else
+            ruff check . --line-length ${PY_LINE_LENGTH}
+          fi
+
+  bazel:
+    name: Bazel Build and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Bazelisk (for Bazel ${{ env.BAZEL_VERSION }})
+        run: |
+          sudo curl -L https://github.com/bazelbuild/bazelisk/releases/download/v1.20.0/bazelisk-linux-amd64 -o /usr/local/bin/bazel
+          sudo chmod +x /usr/local/bin/bazel
+          echo "BAZELISK_BASE_URL=https://github.com/bazelbuild/bazel/releases/download" >> $GITHUB_ENV
+          echo "USE_BAZEL_VERSION=${BAZEL_VERSION}" >> $GITHUB_ENV
+
+      - name: Bazel build
+        run: bazel build //...
+
+      - name: Bazel test
+        run: bazel test //...
+
+
