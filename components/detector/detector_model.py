@@ -20,7 +20,6 @@ def detect_persons_torch(frame, conf_threshold=CONF_THRESHOLD):
     labels = predictions['labels'].cpu().numpy()
     scores = predictions['scores'].cpu().numpy()
     boxes = predictions['boxes'].cpu().numpy()
-
     for i in range(len(labels)):
         if labels[i] == COCO_PERSON_ID and scores[i] > conf_threshold:
             x1, y1, x2, y2 = map(int, boxes[i])
