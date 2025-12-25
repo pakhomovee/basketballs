@@ -2,7 +2,6 @@ import torch
 import torchvision
 from torchvision.transforms import functional as F
 import cv2
-import numpy as np
 
 model = torchvision.models.detection.ssd300_vgg16(weights="DEFAULT")
 model.eval()

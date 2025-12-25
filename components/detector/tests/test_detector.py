@@ -2,6 +2,7 @@ import cv2
 import pytest
 import os
 import torch
+import numpy as np
 from components.detector.detector_model import detect_persons_torch, model
 
 # Define path to a sample video from the dataset
@@ -12,27 +13,22 @@ def sample_frame():
     """Extracts a frame from the sample video."""
     if not os.path.exists(VIDEO_PATH):
         pytest.skip(f"Video file not found at {VIDEO_PATH}")
-    
     cap = cv2.VideoCapture(VIDEO_PATH)
     ret, frame = cap.read()
     cap.release()
-    
     if not ret:
         pytest.fail("Could not read frame from video")
-        
     return frame
 
 def test_model_load():
     """Test if the model loads correctly."""
     assert model is not None
     assert isinstance(model, torch.nn.Module)
-'''
+
 def test_detection_output_format(sample_frame):
     """Test if the detection output has the correct format."""
     persons = detect_persons_torch(sample_frame)
-    
     assert isinstance(persons, list)
-    
     if len(persons) > 0:
         for person in persons:
             assert len(person) == 5
@@ -42,20 +38,15 @@ def test_detection_output_format(sample_frame):
             assert isinstance(x2, int)
             assert isinstance(y2, int)
             assert isinstance(score, (float, np.float32, np.float64))
-            
-            # Check bounding box validity
             assert x1 < x2
             assert y1 < y2
             assert score >= 0.0 and score <= 1.0
-'''
 
 def test_detection_consistency(sample_frame):
     """Test if running detection twice on the same frame yields same results."""
     persons1 = detect_persons_torch(sample_frame)
     persons2 = detect_persons_torch(sample_frame)
-    
     assert len(persons1) == len(persons2)
-    # Simple check for first person
     if len(persons1) > 0:
         assert persons1[0] == persons2[0]
 
