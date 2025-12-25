@@ -1,1 +1,2 @@
-wiki проекта: https://wiki.yandex.ru/homepage
+# Basketballs
+See github wiki for quick start guide
