@@ -8,4 +8,3 @@ py_binary(
         requirement("kagglehub"),
     ],
 )
-
