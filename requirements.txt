@@ -1,7 +1,7 @@
 protobuf==4.25.3
 pyzmq==25.1.2
 pytest==8.0.2
-kagglehub==0.2.4
+kagglehub==0.3.8
 requests==2.31.0
 torch==2.2.1+cpu
 torchvision==0.17.1+cpu

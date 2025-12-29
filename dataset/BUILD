@@ -6,5 +6,6 @@ py_binary(
     srcs = ["download.py"],
     deps = [
         requirement("kagglehub"),
+        requirement("packaging"),
     ],
 )
