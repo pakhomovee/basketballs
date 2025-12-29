@@ -1,9 +1,5 @@
 import cv2
 import pytest
-import os
-import sys
-import torch
-import numpy as np
 from common.utils.datasets import TeamTrackDataset
 from common.utils.utils import get_sample_video_path
 
