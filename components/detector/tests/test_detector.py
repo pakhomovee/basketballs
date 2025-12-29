@@ -18,7 +18,7 @@ def get_video_path():
     path = "components/detector/tests/data/Q2_side_540-570.mp4"
     if os.path.exists(path):
         return path
-    
+
     return None
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def sample_frame():
     video_path = get_video_path()
     if video_path is None:
         pytest.skip(f"Video file not found. Checked relative to script and CWD.")
-        
+
     cap = cv2.VideoCapture(video_path)
     ret, frame = cap.read()
     cap.release()
@@ -56,12 +56,11 @@ def test_detection_output_format(sample_frame):
             assert x1 < x2
             assert y1 < y2
             assert score >= 0.0 and score <= 1.0
-    
+
     # For manual checking
     print(f"\nNumber of detections: {len(persons)}")
     if len(persons) == 0:
         print("WARNING: No persons detected!")
-        
     vis_frame = visualize_detection(sample_frame.copy(), persons)
     output_path = "test_detection_output.jpg"
     cv2.imwrite(output_path, vis_frame)
