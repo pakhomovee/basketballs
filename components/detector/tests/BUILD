@@ -8,6 +8,7 @@ py_test(
     size = "medium",
     deps = [
         "//components/detector:detector_model",
+        "//visualization:visualize",
         requirement("pytest"),
         requirement("opencv-python"),
         requirement("numpy"),
