@@ -6,25 +6,12 @@ import torch
 import numpy as np
 from components.detector.detector_model import detect_persons_torch, model
 from visualization.visualize import visualize_detection
-
-# sample video
-def get_video_path():
-    # for bazel test
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(script_dir, "data", "Q2_side_540-570.mp4")
-    if os.path.exists(path):
-        return path
-    # for local test
-    path = "components/detector/tests/data/Q2_side_540-570.mp4"
-    if os.path.exists(path):
-        return path
-
-    return None
+from common.utils.utils import get_sample_video_path
 
 @pytest.fixture
 def sample_frame():
     """Extracts a frame from the sample video."""
-    video_path = get_video_path()
+    video_path = get_sample_video_path()
     if video_path is None:
         pytest.skip("Video file not found.")
 
