@@ -26,7 +26,7 @@ def sample_frame():
     """Extracts a frame from the sample video."""
     video_path = get_video_path()
     if video_path is None:
-        pytest.skip(f"Video file not found. Checked relative to script and CWD.")
+        pytest.skip("Video file not found.")
 
     cap = cv2.VideoCapture(video_path)
     ret, frame = cap.read()
