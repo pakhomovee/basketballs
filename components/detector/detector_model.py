@@ -2,8 +2,9 @@ import torch
 import torchvision
 from torchvision.transforms import functional as F
 import cv2
+from torchvision.models.detection import fasterrcnn_resnet50_fpn, FasterRCNN_ResNet50_FPN_Weights
 
-model = torchvision.models.detection.ssd300_vgg16(weights="DEFAULT")
+model = fasterrcnn_resnet50_fpn(weights=FasterRCNN_ResNet50_FPN_Weights.COCO_V1)
 model.eval()
 
 COCO_PERSON_ID = 1
