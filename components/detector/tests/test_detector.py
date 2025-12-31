@@ -6,12 +6,12 @@ import torch
 import numpy as np
 from components.detector.detector_model import detect_persons_torch, model
 from visualization.visualize import visualize_detection
-from common.utils.utils import get_sample_video_path
+from common.utils.utils import get_dir
 
 @pytest.fixture
 def sample_frame():
     """Extracts a frame from the sample video."""
-    video_path = get_sample_video_path()
+    video_path = get_dir("common/data/train/sample_item/img1.mp4")
     if video_path is None:
         pytest.skip("Video file not found.")
 

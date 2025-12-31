@@ -11,6 +11,7 @@ py_library(
         requirement("opencv-python"),
         requirement("matplotlib"),
         requirement("IPython"),
+        requirement("tqdm"),
     ],
 )
 

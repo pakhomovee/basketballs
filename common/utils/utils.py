@@ -3,17 +3,15 @@ import os
 import matplotlib.pyplot as plt
 from IPython.display import clear_output
 
-def get_sample_video_path():
+def get_dir(path):
     # for bazel test
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(script_dir, "../../common/data/train/sample_item/img1.mp4")
-    if os.path.exists(path):
-        return path
+    tmp = os.path.join(script_dir, path)
+    if os.path.exists(tmp):
+        return tmp
     # for local test
-    path = "common/data/train/sample_item/img1.mp4"
     if os.path.exists(path):
         return path
-
     return None
 
 def play_video(video):

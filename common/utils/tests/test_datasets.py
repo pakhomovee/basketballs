@@ -1,12 +1,12 @@
 import cv2
 import pytest
 from common.utils.datasets import TeamTrackDataset
-from common.utils.utils import get_sample_video_path
+from common.utils.utils import get_dir
 
 @pytest.fixture
 def sample_frame():
     """Extracts a frame from the sample video."""
-    video_path = get_sample_video_path()
+    video_path = get_dir("common/data/train/sample_item/img1.mp4")
     if video_path is None:
         pytest.skip("Video file not found.")
 
@@ -19,7 +19,7 @@ def sample_frame():
 
 def test_dataset_load():
     """Test if the dataset loads correctly."""
-    dataset = TeamTrackDataset("../../common/data/train/sample_item")
+    dataset = TeamTrackDataset(get_dir("common/data/train"))
     assert len(dataset) == 900
     assert len(dataset.annotations) == 900
     assert len(dataset.items) == 900
