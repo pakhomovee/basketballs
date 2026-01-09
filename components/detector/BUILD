@@ -11,9 +11,6 @@ py_library(
         requirement("torchvision"),
         requirement("opencv-python"),
         requirement("numpy"),
-        requirement("nvidia-cudnn-cu12"),
-        requirement("nvidia-cublas-cu12"),
-        requirement("nvidia-cuda-runtime-cu12"),
     ],
 )
 
@@ -22,6 +19,8 @@ py_binary(
     srcs = ["train_model.py"],
     deps = [
         "//components/detector:detector_model",
+        requirement("ultralytics"),
+        requirement("py-cpuinfo"),
     ],
 )
 

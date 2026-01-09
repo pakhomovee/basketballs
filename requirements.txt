@@ -55,3 +55,11 @@ executing==2.0.1
 pure_eval==0.2.2
 backcall==0.2.0
 pickleshare==0.7.5
+ultralytics==8.3.56
+py-cpuinfo==9.0.0
+scipy==1.15.1
+ultralytics-thop==2.0.14
+seaborn==0.13.2
+psutil==5.9.8
+PyYAML==6.0.1
+lap==0.5.12

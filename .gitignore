@@ -4,6 +4,10 @@ bazel-*
 *.pyc
 __pycache__/
 dataset/teamtrack*
+dataset/yolo_format*
+runs*
 roadmap.md
 *.lock
 .venv/
+*.DS_Store
+basketball_detector*
