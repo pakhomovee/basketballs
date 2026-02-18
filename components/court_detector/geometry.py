@@ -3,13 +3,14 @@ from math import sqrt
 EPSILON = 1e-6
 INFINITY = 1e6
 
+
 class GeometricLine:
     def __init__(self, a, b, c):
 
-        l = sqrt(a ** 2 + b ** 2)
-        a /= l
-        b /= l
-        c /= l
+        length = sqrt(a**2 + b**2)
+        a /= length
+        b /= length
+        c /= length
         self.a, self.b, self.c = a, b, c
 
     @classmethod
@@ -36,14 +37,14 @@ class GeometricLine:
         return (self.a, self.b, self.c)
 
 
-
-def intersect_lines(l: GeometricLine, m: GeometricLine):
-    d = l.b * m.a - m.b * l.a
+def intersect_lines(line1: GeometricLine, line2: GeometricLine):
+    d = line1.b * line2.a - line2.b * line1.a
     if d == 0:
         return None
-    dx = m.b * l.c - m.c * l.b
-    dy = m.c * l.a - l.c * m.a
+    dx = line2.b * line1.c - line2.c * line1.b
+    dy = line2.c * line1.a - line1.c * line2.a
     return (dx / d, dy / d)
+
 
 def check_point_inside_frame(point, frame_size):
     """
@@ -56,8 +57,8 @@ def check_point_inside_frame(point, frame_size):
 
 def _extend_crop_segment(segment, frame_size, min_alpha, max_alpha):
     """
-    This is internal function. 
-    It takes segment, frame, and magic parameters min_alpha and max_alpha, 
+    This is internal function.
+    It takes segment, frame, and magic parameters min_alpha and max_alpha,
     and returns extended or croped segment (depending on magic parameters).
     """
     w, h = frame_size
@@ -85,16 +86,20 @@ def _extend_crop_segment(segment, frame_size, min_alpha, max_alpha):
 
     nx1, ny1, nx2, ny2 = int(round(nx1)), int(round(ny1)), int(round(nx2)), int(round(ny2))
 
-
-    assert check_point_inside_frame((nx1, ny1), frame_size) and check_point_inside_frame((nx2, ny2), frame_size)
+    assert check_point_inside_frame((nx1, ny1), frame_size) and check_point_inside_frame(
+        (nx2, ny2), frame_size
+    )
 
     return ((nx1, ny1), (nx2, ny2))
+
 
 def extend_segment_by_frame(segment, frame_size):
     return _extend_crop_segment(segment, frame_size, -INFINITY, INFINITY)
 
+
 def crop_segment_by_frame(segment, frame_size):
     return _extend_crop_segment(segment, frame_size, 0, 1)
+
 
 def dist(p1, p2):
     x1, y1 = p1

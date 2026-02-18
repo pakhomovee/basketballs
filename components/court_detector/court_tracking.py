@@ -1,9 +1,15 @@
 import cv2
 import numpy as np
-import sympy
 from copy import deepcopy
 import math
-from geometry import GeometricLine, intersect_lines, check_point_inside_frame, extend_segment_by_frame, crop_segment_by_frame, dist
+from geometry import (
+    GeometricLine,
+    intersect_lines,
+    check_point_inside_frame,
+    extend_segment_by_frame,
+    crop_segment_by_frame,
+    dist,
+)
 from court_constants import COURT_POINTS, COURT_LINES
 
 
@@ -11,8 +17,9 @@ def apply_homography_to_point(point, H):
     x, y = point
     p = np.array([x, y, 1])
     transformed = np.dot(H, p)
-    res = (transformed[:2] / transformed[2])
+    res = transformed[:2] / transformed[2]
     return (res[0], res[1])
+
 
 def sample_tracking_points(H, frame_size, extend_lines=True, samples_per_line=100):
     """
@@ -59,8 +66,8 @@ def recalculate_homography_from_detected_lines(H, court_lines, frame_lines, eps=
     for court_line, frame_line in zip(court_lines, frame_lines):
         court_line_eq = np.array(court_line.get_equation())
         frame_line_eq = np.array(frame_line.get_equation())
-        court_lines_norm = court_lines_norm + court_line_eq ** 2
-        frame_lines_norm = frame_lines_norm + frame_line_eq ** 2
+        court_lines_norm = court_lines_norm + court_line_eq**2
+        frame_lines_norm = frame_lines_norm + frame_line_eq**2
     court_lines_norm = np.sqrt(court_lines_norm)
     frame_lines_norm = np.sqrt(frame_lines_norm)
     for court_line, frame_line in zip(court_lines, frame_lines):
@@ -107,8 +114,6 @@ def recalculate_homography_from_detected_lines(H, court_lines, frame_lines, eps=
     return sol.T
 
 
-
-
 def recalculate_homography(H, old_frame, frame, min_length=200, max_lines=6, threshold=30):
     h, w, _ = frame.shape
     old_frame_gray = cv2.cvtColor(old_frame, cv2.COLOR_BGR2GRAY)
@@ -120,12 +125,15 @@ def recalculate_homography(H, old_frame, frame, min_length=200, max_lines=6, thr
     if len(old_points) < 20:
         return reference_points
 
-    lk_params = dict( winSize  = (30, 30),
-                  maxLevel = 2,
-                  criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+    lk_params = dict(
+        winSize=(30, 30),
+        maxLevel=2,
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03),
+    )
 
-    new_points, st, err = cv2.calcOpticalFlowPyrLK(old_frame_gray, frame_gray, old_points, None, **lk_params)
-    # new_points, st, err = cv2.optflow.calcOpticalFlowSparseRLOF(old_frame, frame, old_points, None)
+    new_points, st, err = cv2.calcOpticalFlowPyrLK(
+        old_frame_gray, frame_gray, old_points, None, **lk_params
+    )
 
     st = st.flatten().astype(dtype=np.bool)
     old_points = old_points[st]
@@ -155,7 +163,7 @@ def recalculate_homography(H, old_frame, frame, min_length=200, max_lines=6, thr
 
         mask = np.zeros((h, w), dtype="uint8")
         cv2.line(mask, pi, pj, 255, threshold)
-        masked_edges = cv2.bitwise_and(edges, edges, mask=mask)    
+        masked_edges = cv2.bitwise_and(edges, edges, mask=mask)
         hough_lines = cv2.HoughLines(masked_edges, 1, np.pi / 180, 20, None, 0, 0)
         if hough_lines is None:
             continue
@@ -178,10 +186,8 @@ def recalculate_homography(H, old_frame, frame, min_length=200, max_lines=6, thr
         if best_line is not None:
             court_lines.append(GeometricLine.from_points(COURT_POINTS[i], COURT_POINTS[j]))
             frame_lines.append(best_line)
-            
-    
-    H_new = recalculate_homography_from_detected_lines(H_lk, court_lines, frame_lines)
 
+    H_new = recalculate_homography_from_detected_lines(H_lk, court_lines, frame_lines)
 
     # court_lines = get_court_lines(reference_points)
 
@@ -191,7 +197,7 @@ def recalculate_homography(H, old_frame, frame, min_length=200, max_lines=6, thr
     #     p1, p2 = court_line
     #     mask = np.zeros((h, w), dtype="uint8")
     #     cv2.line(mask, p1, p2, 255, 40)
-    #     masked_edges = cv2.bitwise_and(edges, edges, mask=mask)    
+    #     masked_edges = cv2.bitwise_and(edges, edges, mask=mask)
     #     lines = cv2.HoughLines(masked_edges, 1, np.pi / 180, 20, None, 0, 0)
     #     if lines is not None:
     #         for j in range(0, min(len(lines), 3)):
@@ -226,11 +232,13 @@ def recalculate_homography(H, old_frame, frame, min_length=200, max_lines=6, thr
 
     return H_new
 
+
 cap = cv2.VideoCapture("dataset/segment.mp4")
 
 reference_points = [None for i in range(len(COURT_POINTS))]
 cur_reference_point = 0
 H = None
+
 
 def try_calculate_homography():
     global H, reference_points
@@ -249,17 +257,24 @@ def try_calculate_homography():
         return
     H = H_new
 
+
 def on_mouse(event, x, y, flags, param):
     global cur_reference_point, reference_points
-    if event == cv2.EVENT_LBUTTONDOWN or event == cv2.EVENT_RBUTTONDOWN or event == cv2.EVENT_MBUTTONDOWN:
+    if (
+        event == cv2.EVENT_LBUTTONDOWN
+        or event == cv2.EVENT_RBUTTONDOWN
+        or event == cv2.EVENT_MBUTTONDOWN
+    ):
         if event == cv2.EVENT_LBUTTONDOWN:
             reference_points[cur_reference_point] = (x, y)
             try_calculate_homography()
             show_frame(frame, reference_points)
         cur_reference_point = (cur_reference_point + 1) % len(COURT_POINTS)
 
+
 cv2.namedWindow("match")
 cv2.setMouseCallback("match", on_mouse)
+
 
 def show_frame(frame, reference_points):
     frame = deepcopy(frame)
@@ -276,7 +291,9 @@ def show_frame(frame, reference_points):
             p_new = apply_homography_to_point(p, H)
             if check_point_inside_frame(p_new, (w, h)):
                 x, y = p_new
-                cv2.circle(frame, (int(round(x)), int(round(y))), radius=4, color=(0, 255, 0), thickness=-1)
+                cv2.circle(
+                    frame, (int(round(x)), int(round(y))), radius=4, color=(0, 255, 0), thickness=-1
+                )
 
     # sampled_points = sample_tracking_points(reference_points, (w, h))
     # for x, y in sampled_points:
@@ -287,7 +304,7 @@ def show_frame(frame, reference_points):
     #     p1, p2 = court_line
     #     mask = np.zeros((h, w), dtype="uint8")
     #     cv2.line(mask, p1, p2, 255, 40)
-    #     masked_edges = cv2.bitwise_and(edges, edges, mask=mask)    
+    #     masked_edges = cv2.bitwise_and(edges, edges, mask=mask)
     #     lines = cv2.HoughLines(masked_edges, 1, np.pi / 180, 20, None, 0, 0)
     #     if lines is not None:
     #         for i in range(0, min(len(lines), 3)):
@@ -301,7 +318,7 @@ def show_frame(frame, reference_points):
     #             pt2 = (int(x0 - 1000*(-b)), int(y0 - 1000*(a)))
     #             # cv2.line(frame, pt1, pt2, (0,0,255), 3, cv2.LINE_AA)
     edges = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
-    
+
     cv2.imwrite("frame.png", frame)
     cv2.imshow("match", frame)
     cv2.imshow("edges", edges)
@@ -323,10 +340,10 @@ while True:
     shoud_exit = False
     while True:
         key = cv2.waitKey(-1)
-        if key & 0xFF == ord('q'):
+        if key & 0xFF == ord("q"):
             shoud_exit = True
             break
-        if key & 0xFF == ord(' '):
+        if key & 0xFF == ord(" "):
             break
     if shoud_exit:
         break

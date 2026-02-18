@@ -6,6 +6,7 @@ from torchvision import transforms as T
 from torchvision.models.detection import fasterrcnn_mobilenet_v3_large_320_fpn
 from tqdm import tqdm
 
+
 def apply_H(pt_h, H):
     """Apply 3x3 homography to homogeneous point."""
     mapped = H @ pt_h
@@ -22,7 +23,7 @@ def make_mask(shape, scoreboard=(0, 850, 1920, 0), people=None):
     if x1c < x2c and y1c < y2c:
         mask[y1c:y2c, x1c:x2c] = 0
     if people:
-        for (px, py, pw, ph) in people:
+        for px, py, pw, ph in people:
             px2, py2 = px + pw, py + ph
             px1c, py1c, px2c, py2c = max(0, px), max(0, py), min(w, px2), min(h, py2)
             if px1c < px2c and py1c < py2c:
@@ -81,15 +82,15 @@ def detect_people_batch(
                 scales.append(scale)
 
             images = [transform(f).to(device) for f in resized_batch]
-            with torch.amp.autocast('cuda'):
+            with torch.amp.autocast("cuda"):
                 outputs = model(images)
             for out, scale in zip(outputs, scales):
                 boxes = out["boxes"].cpu().numpy()
                 labels = out["labels"].cpu().numpy()
                 scores = out["scores"].cpu().numpy()
                 people = []
-                for b, l, s in zip(boxes, labels, scores):
-                    if l != 1 or s < score_thresh:  # COCO label 1 = person
+                for b, label, s in zip(boxes, labels, scores):
+                    if label != 1 or s < score_thresh:  # COCO label 1 = person
                         continue
                     x1, y1, x2, y2 = b.astype(int)
                     # rescale back to original frame coords
@@ -142,7 +143,7 @@ def compute_forward_homographies(frames, grays, scoreboard, people_detections, s
 
         if show_progress:
             vis = frames[i].copy()
-            for (px, py, pw, ph) in people_rects:
+            for px, py, pw, ph in people_rects:
                 cv2.rectangle(vis, (px, py), (px + pw, py + ph), (0, 0, 255), 2)
             cv2.imshow("progress", vis)
             cv2.waitKey(1)

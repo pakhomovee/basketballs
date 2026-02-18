@@ -1,20 +1,20 @@
 import cv2
 import numpy as np
-import sympy
 from copy import deepcopy
 import math
 from geometry import GeometricLine, intersect_lines
 
 points_on_lines = [
-        [0, 6],
-        [1, 2, 8, 7],
-        [4, 3, 9, 10],
-        [5, 11],
-        [0, 1, 4, 5],
-        [2, 3],
-        [8, 9],
-        [6, 7, 10, 11]
-    ]
+    [0, 6],
+    [1, 2, 8, 7],
+    [4, 3, 9, 10],
+    [5, 11],
+    [0, 1, 4, 5],
+    [2, 3],
+    [8, 9],
+    [6, 7, 10, 11],
+]
+
 
 def get_court_lines(reference_points):
     """
@@ -25,20 +25,21 @@ def get_court_lines(reference_points):
     lines = [None for i in range(8)]
     for i in range(len(lines)):
         points = points_on_lines[i]
-        l = 0
-        r = len(points) - 1
-        while l < r:
-            l_bad = reference_points[points[l]] is None
-            r_bad = reference_points[points[r]] is None
+        lft = 0
+        rght = len(points) - 1
+        while lft < rght:
+            l_bad = reference_points[points[lft]] is None
+            r_bad = reference_points[points[rght]] is None
             if (not l_bad) and (not r_bad):
                 break
             if l_bad:
-                l += 1
+                lft += 1
             if r_bad:
-                r -= 1
-        if l < r:
-            lines[i] = (reference_points[points[l]], reference_points[points[r]])
+                rght -= 1
+        if lft < rght:
+            lines[i] = (reference_points[points[lft]], reference_points[points[rght]])
     return lines
+
 
 def check_point_inside_frame(point, frame_size):
     """
@@ -47,6 +48,7 @@ def check_point_inside_frame(point, frame_size):
     x, y = point
     w, h = frame_size
     return 0 <= x and x < w and 0 <= y and y < h
+
 
 def extend_line(line, frame_size, infinity=1e9):
     """
@@ -57,8 +59,9 @@ def extend_line(line, frame_size, infinity=1e9):
     x1, y1 = line[0]
     x2, y2 = line[1]
 
-
-    if (not check_point_inside_frame((x1, y1), frame_size)) or (not check_point_inside_frame((x2, y2), frame_size)):
+    if (not check_point_inside_frame((x1, y1), frame_size)) or (
+        not check_point_inside_frame((x2, y2), frame_size)
+    ):
         raise Exception("Line doesn't lie inside the frame!")
 
     min_alpha, max_alpha = -infinity, infinity
@@ -83,8 +86,9 @@ def extend_line(line, frame_size, infinity=1e9):
 
     nx1, ny1, nx2, ny2 = int(round(nx1)), int(round(ny1)), int(round(nx2)), int(round(ny2))
 
-
-    assert check_point_inside_frame((nx1, ny1), frame_size) and check_point_inside_frame((nx2, ny2), frame_size)
+    assert check_point_inside_frame((nx1, ny1), frame_size) and check_point_inside_frame(
+        (nx2, ny2), frame_size
+    )
 
     return ((nx1, ny1), (nx2, ny2))
 
@@ -113,6 +117,7 @@ def sample_tracking_points(reference_points, frame_size, extend_lines=True, samp
                 sampled_points.append((px, py))
     return sampled_points
 
+
 def recalculate_reference_points(reference_points, old_frame, frame):
     h, w, _ = frame.shape
     old_frame_gray = cv2.cvtColor(old_frame, cv2.COLOR_BGR2GRAY)
@@ -124,7 +129,9 @@ def recalculate_reference_points(reference_points, old_frame, frame):
     if len(old_points) < 20:
         return reference_points
 
-    new_points, st, err = cv2.calcOpticalFlowPyrLK(old_frame_gray, frame_gray, old_points, None, **lk_params)
+    new_points, st, err = cv2.calcOpticalFlowPyrLK(
+        old_frame_gray, frame_gray, old_points, None, **lk_params
+    )
     st = st.flatten().astype(dtype=np.bool)
     old_points = old_points[st]
     new_points = new_points[st]
@@ -154,7 +161,7 @@ def recalculate_reference_points(reference_points, old_frame, frame):
         p1, p2 = court_line
         mask = np.zeros((h, w), dtype="uint8")
         cv2.line(mask, p1, p2, 255, 40)
-        masked_edges = cv2.bitwise_and(edges, edges, mask=mask)    
+        masked_edges = cv2.bitwise_and(edges, edges, mask=mask)
         lines = cv2.HoughLines(masked_edges, 1, np.pi / 180, 20, None, 0, 0)
         if lines is not None:
             for j in range(0, min(len(lines), 3)):
@@ -164,8 +171,8 @@ def recalculate_reference_points(reference_points, old_frame, frame):
                 b = math.sin(theta)
                 x0 = a * rho
                 y0 = b * rho
-                pt1 = (int(x0 + 1000*(-b)), int(y0 + 1000*(a)))
-                pt2 = (int(x0 - 1000*(-b)), int(y0 - 1000*(a)))
+                pt1 = (int(x0 + 1000 * (-b)), int(y0 + 1000 * (a)))
+                pt2 = (int(x0 - 1000 * (-b)), int(y0 - 1000 * (a)))
                 geometric_line = GeometricLine.from_points(pt1, pt2)
                 if geometric_line.dist(p1) <= 40 and geometric_line.dist(p2) <= 40:
                     court_lines[i] = (pt1, pt2)
@@ -181,11 +188,11 @@ def recalculate_reference_points(reference_points, old_frame, frame):
         if len(my_lines) >= 2:
             x, y = intersect_lines(my_lines[0], my_lines[1])
             new_points[i] = (int(x), int(y))
-            print(i,new_points[i])
+            print(i, new_points[i])
         elif len(my_lines) == 1 and new_points[i] is not None:
             x, y = my_lines[0].project(new_points[i])
             new_points[i] = (int(x), int(y))
-            print(i,new_points[i])
+            print(i, new_points[i])
 
     return new_points
 
@@ -194,13 +201,16 @@ def apply_homography_to_point(point, H):
     x, y = point
     p = np.array([x, y, 1])
     transformed = np.dot(H, p)
-    res = (transformed[:2] / transformed[2])
+    res = transformed[:2] / transformed[2]
     return (res[0], res[1])
+
 
 cap = cv2.VideoCapture("dataset/segment.mp4")
 
 reference_points = [None for i in range(12)]
 cur_reference_point = 0
+
+
 def on_mouse(event, x, y, flags, param):
     global user_points, cur_reference_point
     if event == cv2.EVENT_LBUTTONDOWN:
@@ -208,8 +218,10 @@ def on_mouse(event, x, y, flags, param):
         cur_reference_point = (cur_reference_point + 1) % 12
         show_frame(frame, reference_points)
 
+
 cv2.namedWindow("match")
 cv2.setMouseCallback("match", on_mouse)
+
 
 def show_frame(frame, reference_points):
     frame = deepcopy(frame)
@@ -224,7 +236,7 @@ def show_frame(frame, reference_points):
         p1, p2 = court_line
         mask = np.zeros((h, w), dtype="uint8")
         cv2.line(mask, p1, p2, 255, 40)
-        masked_edges = cv2.bitwise_and(edges, edges, mask=mask)    
+        masked_edges = cv2.bitwise_and(edges, edges, mask=mask)
         lines = cv2.HoughLines(masked_edges, 1, np.pi / 180, 20, None, 0, 0)
         if lines is not None:
             for i in range(0, min(len(lines), 3)):
@@ -234,26 +246,28 @@ def show_frame(frame, reference_points):
                 b = math.sin(theta)
                 x0 = a * rho
                 y0 = b * rho
-                pt1 = (int(x0 + 10000*(-b)), int(y0 + 10000*(a)))
-                pt2 = (int(x0 - 10000*(-b)), int(y0 - 10000*(a)))
-                cv2.line(frame, pt1, pt2, (0,0,255), 2, cv2.LINE_AA)
-    
+                pt1 = (int(x0 + 10000 * (-b)), int(y0 + 10000 * (a)))
+                pt2 = (int(x0 - 10000 * (-b)), int(y0 - 10000 * (a)))
+                cv2.line(frame, pt1, pt2, (0, 0, 255), 2, cv2.LINE_AA)
+
     for p in reference_points:
         if p is None:
             continue
         x, y = p
         cv2.circle(frame, (int(x), int(y)), radius=7, color=(0, 255, 0), thickness=-1)
     edges = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
-            
-    
+
     cv2.imwrite("frame.png", frame)
     cv2.imshow("match", frame)
     cv2.imshow("edges", edges)
 
+
 # Parameters for lucas kanade optical flow
-lk_params = dict( winSize  = (30, 30),
-                  maxLevel = 2,
-                  criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+lk_params = dict(
+    winSize=(30, 30),
+    maxLevel=2,
+    criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03),
+)
 
 old_frame = None
 while True:
@@ -271,10 +285,10 @@ while True:
     shoud_exit = False
     while True:
         key = cv2.waitKey(-1)
-        if key & 0xFF == ord('q'):
+        if key & 0xFF == ord("q"):
             shoud_exit = True
             break
-        if key & 0xFF == ord(' '):
+        if key & 0xFF == ord(" "):
             break
     if shoud_exit:
         break
