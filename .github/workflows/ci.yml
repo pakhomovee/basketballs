@@ -10,7 +10,6 @@ env:
   # Changeable formatting parameters
   CXX_LINE_LENGTH: "100"
   PY_LINE_LENGTH: "100"
-  BAZEL_VERSION: "7.0.0"
 
 jobs:
   cpp-style:
@@ -70,23 +69,3 @@ jobs:
             echo "Using command-line line-length: ${PY_LINE_LENGTH}"
             ruff check . --line-length ${PY_LINE_LENGTH}
           fi
-
-  bazel:
-    name: Bazel Build and Test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Bazelisk (for Bazel ${{ env.BAZEL_VERSION }})
-        run: |
-          sudo curl -L https://github.com/bazelbuild/bazelisk/releases/download/v1.20.0/bazelisk-linux-amd64 -o /usr/local/bin/bazel
-          sudo chmod +x /usr/local/bin/bazel
-          echo "BAZELISK_BASE_URL=https://github.com/bazelbuild/bazel/releases/download" >> $GITHUB_ENV
-          echo "USE_BAZEL_VERSION=${BAZEL_VERSION}" >> $GITHUB_ENV
-
-      - name: Bazel build
-        run: bazel build //...
-
-      - name: Bazel test
-        run: bazel test //...

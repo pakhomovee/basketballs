@@ -9,7 +9,6 @@ from visualization.visualize import visualize_detection
 
 # sample video
 def get_video_path():
-    # for bazel test
     script_dir = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(script_dir, "data", "Q2_side_540-570.mp4")
     if os.path.exists(path):
