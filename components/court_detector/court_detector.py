@@ -15,7 +15,8 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 
-from court_detector.court_constants import SMALL_COURT_POINTS, FIBA_COURT_POINTS, NBA_COURT_POINTS, COURT_TYPE_TO_COURT_POINTS
+from court_detector.court_constants import SMALL_COURT_POINTS, \
+    FIBA_COURT_POINTS, NBA_COURT_POINTS, COURT_TYPE_TO_COURT_POINTS
 from court_detector.trainer import CourtDetectionTrainer
 from court_detector.prepare_dataset import prepare_dataset
 from common.classes.player import FrameDetections
