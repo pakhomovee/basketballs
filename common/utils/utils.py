@@ -30,3 +30,30 @@ def download_and_extract(url, extract_dir="."):
 
     os.remove(zip_path)
     print("Data downloaded and extracted.")
+
+def download(url, filename, save_dir="."):
+    """
+    Download a file from a Yandex Disk public link without extracting.
+
+    Args:
+        url: Yandex Disk public key (e.g. https://disk.yandex.ru/d/xxx).
+        save_dir: Directory to save the file.
+        filename: Name of the saved file.
+
+    Returns:
+        Path to the downloaded file.
+    """
+    base_url = "https://cloud-api.yandex.net/v1/disk/public/resources/download?"
+    final_url = base_url + "public_key=" + url
+
+    response = requests.get(final_url)
+    download_url = response.json()["href"]
+    download_response = requests.get(download_url)
+
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, filename)
+    with open(save_path, "wb") as f:
+        f.write(download_response.content)
+
+    print(f"Downloaded to {save_path}")
+    return save_path

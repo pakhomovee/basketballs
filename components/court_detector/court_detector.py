@@ -15,9 +15,11 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 
-from court_detector.court_constants import SMALL_COURT_POINTS, FIBA_COURT_POINTS, NBA_COURT_POINTS, COURT_TYPE_TO_COURT_POINTS
+from court_detector.court_constants import SMALL_COURT_POINTS, \
+    FIBA_COURT_POINTS, NBA_COURT_POINTS, COURT_TYPE_TO_COURT_POINTS
 from court_detector.trainer import CourtDetectionTrainer
 from court_detector.prepare_dataset import prepare_dataset
+from common.classes.player import FrameDetections
 
 from typing import Optional
 from collections import defaultdict
@@ -120,8 +122,39 @@ class CourtDetector:
             court_points.append([court_point])
         frame_points = np.array(frame_points)
         court_points = np.array(court_points)
-        H, _ = cv2.findHomography(frame_points, court_points)
+        try:
+            H, _ = cv2.findHomography(frame_points, court_points)
+        except cv2.error:
+            return pred_centers, pred_cls, None
         return pred_centers, pred_cls, H
+
+    def run(self, video_path: str, detections: FrameDetections) -> None:
+        """
+        Process video frame-by-frame, compute homography, and enrich each
+        :class:`Player` with ``court_position`` (x_m, y_m in meters).
+        """
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open video: {video_path}")
+
+        frame_id = 1
+        while True:
+            ret, frame_bgr = cap.read()
+            if not ret:
+                break
+            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            _, _, H = self.predict_court_homography(frame_rgb)
+            if H is not None:
+                for player in detections.get(frame_id, []):
+                    x1, y1, x2, y2 = player.bbox
+                    cx = (x1 + x2) / 2.0
+                    cy = float(y2)  # bottom middle of bbox
+                    pts = project_homography(np.array([[cx, cy]]), H)
+                    if pts.size >= 2:
+                        player.court_position = (float(pts[0, 0]), float(pts[0, 1]))
+            frame_id += 1
+        cap.release()
 
 
 def main():
