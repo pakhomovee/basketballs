@@ -1,14 +1,16 @@
 import os
+from pathlib import Path
 from typing import Tuple, Union
 
 import cv2
 import numpy as np
 
-from classes.classes import CourtType
+from components.classes.classes import CourtType
 
+_flattener_dir = Path(__file__).parent.resolve()
 PATH_VIA_LEAGUE = {
-    CourtType.NBA: "./flattener/nba.png",
-    CourtType.FIBA: "./flattener/fiba.png",
+    CourtType.NBA: str(_flattener_dir / "nba.png"),
+    CourtType.FIBA: str(_flattener_dir / "fiba.png"),
 }
 
 # Параметры, с которыми был сохранён базовый корт (scale=10, padding=40)
@@ -43,6 +45,11 @@ class Flattener:
         self._league = league
         path = PATH_VIA_LEAGUE[league]
         self._base_court = cv2.imread(path)
+        if self._base_court is None:
+            raise FileNotFoundError(
+                f"Court image not found: {path}. "
+                "Add nba.png or fiba.png to components/flattener/."
+            )
 
     def get_frame(
         self,
