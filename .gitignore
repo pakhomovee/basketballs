@@ -10,3 +10,5 @@ components/court_detector/dataset
 components/court_detector/runs
 components/court_detector/yolo_combined_data
 models
+*mp4
+*pt

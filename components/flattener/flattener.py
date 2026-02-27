@@ -5,7 +5,7 @@ from typing import Tuple, Union
 import cv2
 import numpy as np
 
-from components.classes.classes import CourtType
+from classes.classes import CourtType
 
 _flattener_dir = Path(__file__).parent.resolve()
 PATH_VIA_LEAGUE = {

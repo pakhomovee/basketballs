@@ -1,7 +1,8 @@
 import sys
 sys.path.append('/home/pakhomovee/basketballs')
-from pathlib import Path
 
+from pathlib import Path
+import os
 import cv2
 import numpy as np
 from tqdm.auto import tqdm
@@ -11,6 +12,7 @@ from court_detector.court_detector import CourtDetector
 from team_clustering.team_clustering import TeamClustering
 from flattener.flattener import Flattener
 from classes.classes import CourtType
+from common.utils.utils import download
 
 
 def main(
@@ -32,7 +34,9 @@ def main(
         league: Court type (NBA or FIBA) for flattener.
         k_frames: Sample every k-th frame for team clustering.
     """
-    detector = MockDetector(gt_path, normalized=False)
+    if not os.path.exists('../models/court_detection_model.pt'):
+        download('https://disk.yandex.ru/d/_dHiheOwN2-R_w', 'court_detection_model.pt', '../models')
+    detector = MockDetector(gt_path, normalized=True)
     detections = detector.detect(video_path)
 
     court_detector = CourtDetector()
