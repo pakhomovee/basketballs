@@ -1,3 +1,5 @@
+from classes.classes import CourtType
+
 FIBA_COURT_POINTS = [
     (-14, 7.5, 0),
     (-14, 7.5 - 0.9, 1),
@@ -152,4 +154,10 @@ MAPPING_ROBOFLOW_COURT_DETECTION = {
     31: 27,
     25: 28,
     32: 26,
+}
+
+
+COURT_TYPE_TO_COURT_POINTS = {
+    CourtType.FIBA: FIBA_COURT_POINTS,
+    CourtType.NBA: NBA_COURT_POINTS,
 }

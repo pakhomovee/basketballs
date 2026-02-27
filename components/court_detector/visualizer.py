@@ -10,9 +10,9 @@ import matplotlib
 import numpy as np
 from ultralytics import YOLO
 
-from court_constants import SMALL_COURT_POINTS, FIBA_COURT_POINTS, MAPPING_ROBOFLOW_COURT_DETECTION
-from court_detector import CourtDetector, project_homography
-from prepare_dataset import SPORCENTER_GOOD_SEQS
+from court_detector.court_constants import SMALL_COURT_POINTS, FIBA_COURT_POINTS, MAPPING_ROBOFLOW_COURT_DETECTION
+from court_detector.court_detector import CourtDetector, project_homography
+from court_detector.prepare_dataset import SPORCENTER_GOOD_SEQS
 import json
 import matplotlib.pyplot as plt
 

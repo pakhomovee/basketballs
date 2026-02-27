@@ -8,7 +8,7 @@ from PIL import Image
 import numpy as np
 from tqdm import tqdm
 from copy import deepcopy
-from court_constants import SYMMETRIC_MAPPING
+from court_detector.court_constants import SYMMETRIC_MAPPING
 
 
 class CourtDetectionDataset(YOLODataset):

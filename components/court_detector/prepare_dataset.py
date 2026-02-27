@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
-from court_constants import SMALL_COURT_POINTS, FIBA_COURT_POINTS, MAPPING_ROBOFLOW_COURT_DETECTION
+from court_detector.court_constants import SMALL_COURT_POINTS, FIBA_COURT_POINTS, MAPPING_ROBOFLOW_COURT_DETECTION
 
 JPEG_QUALITY = 50
 SPORTCENTER_FRACTION = 0.2

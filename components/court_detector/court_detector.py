@@ -15,12 +15,14 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 
-from court_constants import SMALL_COURT_POINTS, FIBA_COURT_POINTS, NBA_COURT_POINTS
-from trainer import CourtDetectionTrainer
-from prepare_dataset import prepare_dataset
+from court_detector.court_constants import SMALL_COURT_POINTS, FIBA_COURT_POINTS, NBA_COURT_POINTS, COURT_TYPE_TO_COURT_POINTS
+from court_detector.trainer import CourtDetectionTrainer
+from court_detector.prepare_dataset import prepare_dataset
 
 from typing import Optional
 from collections import defaultdict
+
+from classes.classes import CourtType
 
 
 def project_homography(points_xy, H):
@@ -101,8 +103,9 @@ class CourtDetector:
         return pred_centers, pred_cls
 
     def predict_court_homography(
-        self, frame_rgb: np.ndarray, court_points: list[tuple] = NBA_COURT_POINTS
+        self, frame_rgb: np.ndarray, court_type: CourtType = CourtType.NBA,
     ) -> (np.ndarray, np.ndarray, Optional[np.ndarray]):
+        court_points = COURT_TYPE_TO_COURT_POINTS[court_type]
         pred_centers, pred_cls = self.predict_keypoints(frame_rgb)
         cls_to_points = defaultdict(list)
         for px, py, pcls in court_points:
