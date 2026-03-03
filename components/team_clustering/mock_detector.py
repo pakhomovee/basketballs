@@ -1,5 +1,5 @@
 from common.classes.player import FrameDetections
-from components.team_clustering.ground_truth import load_ground_truth, load_ground_truth_absolute
+from team_clustering.ground_truth import load_ground_truth, load_ground_truth_absolute
 
 
 class MockDetector:

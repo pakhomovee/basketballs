@@ -7,7 +7,7 @@ from tqdm.auto import tqdm
 
 from common.utils.utils import get_device
 from common.classes.player import Player, FrameDetections
-from components.team_clustering.embedding import PlayerEmbedder
+from team_clustering.embedding import PlayerEmbedder
 
 try:
     import umap

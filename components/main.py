@@ -1,7 +1,6 @@
 import sys
-sys.path.append('/home/pakhomovee/basketballs')
-
 from pathlib import Path
+
 import os
 import cv2
 import numpy as np
