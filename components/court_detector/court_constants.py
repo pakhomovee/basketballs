@@ -1,4 +1,4 @@
-from classes.classes import CourtType
+from common.classes import CourtType
 
 FIBA_COURT_POINTS = [
     (-14, 7.5, 0),

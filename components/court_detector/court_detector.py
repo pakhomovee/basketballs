@@ -24,7 +24,7 @@ from common.classes.player import FrameDetections
 from typing import Optional
 from collections import defaultdict
 
-from classes.classes import CourtType
+from common.classes import CourtType
 
 
 def project_homography(points_xy, H):

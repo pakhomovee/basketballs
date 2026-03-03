@@ -5,7 +5,7 @@ import sys
 import torch
 import numpy as np
 from components.detector.detector_model import detect_persons_torch, model
-from visualization.visualize import visualize_detection
+from components.visualization.bbox import visualize_detection
 
 # sample video
 def get_video_path():

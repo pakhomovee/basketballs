@@ -1,10 +1,12 @@
+"""Team clustering visualization: render videos with team-colored bounding boxes."""
+
 import random
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 
-from common.classes.player import FrameDetections
+from common.classes import FrameDetections
 
 TEAM_COLORS = [(0, 0, 255), (255, 0, 0)]  # Red, Blue (BGR)
 
