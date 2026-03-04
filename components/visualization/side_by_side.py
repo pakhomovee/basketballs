@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 
+
 def make_side_by_side_video(
     top_video_path: str,
     bottom_video_path: str,

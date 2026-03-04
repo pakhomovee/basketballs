@@ -12,5 +12,5 @@ __all__ = [
     "write_2d_court_video",
     "render_clustered_video",
     "plot_masks",
-    "make_side_by_side_video"
+    "make_side_by_side_video",
 ]

@@ -16,7 +16,7 @@ def main(
     output_2d_path: str | None = None,
     court_type: CourtType = CourtType.NBA,
     k_frames: int = 30,
-    output_both: str | None = None
+    output_both: str | None = None,
 ):
     """
     Full pipeline: detect, court detect, team cluster, generate 2D video.
