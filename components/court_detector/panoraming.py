@@ -268,13 +268,9 @@ def main():
     detector.eval()
     transform = T.Compose([T.ToTensor()])
 
-    people_detections = detect_people_batch(
-        frames, detector, device, transform, batch_size=4, max_side=640
-    )
+    people_detections = detect_people_batch(frames, detector, device, transform, batch_size=4, max_side=640)
 
-    forward_H = compute_forward_homographies(
-        frames, grays, scoreboard, people_detections, show_progress=True
-    )
+    forward_H = compute_forward_homographies(frames, grays, scoreboard, people_detections, show_progress=True)
     ref_idx = choose_ref_by_center_alignment(forward_H, grays[0].shape)
     print(f"Reference frame index (center alignment): {ref_idx}")
 

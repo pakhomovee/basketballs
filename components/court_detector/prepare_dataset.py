@@ -203,9 +203,7 @@ def convert_roboflow(out_dirs):
     for split_yolo, split_out in [("train", "train"), ("valid", "val")]:
         img_dir = ds_root / split_yolo / "images"
         lbl_dir = ds_root / split_yolo / "labels"
-        images = sorted(
-            p for p in img_dir.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"}
-        )
+        images = sorted(p for p in img_dir.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
         for img_path in tqdm(images, desc=f"roboflow {split_out}"):
             lbl_path = lbl_dir / (img_path.stem + ".txt")
             if not lbl_path.is_file():

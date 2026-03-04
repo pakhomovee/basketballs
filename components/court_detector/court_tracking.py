@@ -131,9 +131,7 @@ def recalculate_homography(H, old_frame, frame, min_length=200, max_lines=6, thr
         criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03),
     )
 
-    new_points, st, err = cv2.calcOpticalFlowPyrLK(
-        old_frame_gray, frame_gray, old_points, None, **lk_params
-    )
+    new_points, st, err = cv2.calcOpticalFlowPyrLK(old_frame_gray, frame_gray, old_points, None, **lk_params)
 
     st = st.flatten().astype(dtype=np.bool)
     old_points = old_points[st]
@@ -260,11 +258,7 @@ def try_calculate_homography():
 
 def on_mouse(event, x, y, flags, param):
     global cur_reference_point, reference_points
-    if (
-        event == cv2.EVENT_LBUTTONDOWN
-        or event == cv2.EVENT_RBUTTONDOWN
-        or event == cv2.EVENT_MBUTTONDOWN
-    ):
+    if event == cv2.EVENT_LBUTTONDOWN or event == cv2.EVENT_RBUTTONDOWN or event == cv2.EVENT_MBUTTONDOWN:
         if event == cv2.EVENT_LBUTTONDOWN:
             reference_points[cur_reference_point] = (x, y)
             try_calculate_homography()
@@ -291,9 +285,7 @@ def show_frame(frame, reference_points):
             p_new = apply_homography_to_point(p, H)
             if check_point_inside_frame(p_new, (w, h)):
                 x, y = p_new
-                cv2.circle(
-                    frame, (int(round(x)), int(round(y))), radius=4, color=(0, 255, 0), thickness=-1
-                )
+                cv2.circle(frame, (int(round(x)), int(round(y))), radius=4, color=(0, 255, 0), thickness=-1)
 
     # sampled_points = sample_tracking_points(reference_points, (w, h))
     # for x, y in sampled_points:

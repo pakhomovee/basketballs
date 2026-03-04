@@ -12,3 +12,6 @@ components/court_detector/yolo_combined_data
 models
 *mp4
 *pt
+*zip
+*out
+components/tracking/tracking

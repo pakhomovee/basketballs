@@ -58,7 +58,5 @@ def load_ground_truth_absolute(gt_path: str) -> FrameDetections:
             frame_id = int(parts[0])
             obj_id = int(parts[1])
             x, y, w, h = float(parts[2]), float(parts[3]), float(parts[4]), float(parts[5])
-            gt_data[frame_id].append(
-                Player(player_id=obj_id, bbox=[int(x), int(y), int(x + w), int(y + h)])
-            )
+            gt_data[frame_id].append(Player(player_id=obj_id, bbox=[int(x), int(y), int(x + w), int(y + h)]))
     return gt_data
