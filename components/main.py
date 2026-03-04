@@ -1,12 +1,5 @@
-import sys
-from pathlib import Path
-
-# Ensure components dir is first in path (avoids shadowing by system 'common' package)
-_components_dir = Path(__file__).resolve().parent
-if str(_components_dir) not in sys.path:
-    sys.path.insert(0, str(_components_dir))
-
 import os
+from pathlib import Path
 
 from team_clustering.mock_detector import MockDetector
 from court_detector.court_detector import CourtDetector
@@ -35,8 +28,8 @@ def main(
         league: Court type (NBA or FIBA) for flattener.
         k_frames: Sample every k-th frame for team clustering.
     """
-    if not os.path.exists('../models/court_detection_model.pt'):
-        download('https://disk.yandex.ru/d/_dHiheOwN2-R_w', 'court_detection_model.pt', '../models')
+    if not os.path.exists("../models/court_detection_model.pt"):
+        download("https://disk.yandex.ru/d/_dHiheOwN2-R_w", "court_detection_model.pt", "../models")
     detector = MockDetector(gt_path, normalized=True)
     detections = detector.detect(video_path)
 

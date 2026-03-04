@@ -6,16 +6,14 @@ Center of court = (0, 0), right = +x.
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Tuple, Union
+from typing import Tuple, Union
 
 import cv2
 import numpy as np
 from tqdm.auto import tqdm
 
 from common.classes import CourtType
-
-if TYPE_CHECKING:
-    from common.classes import FrameDetections
+from common.classes import FrameDetections
 
 _ASSETS_DIR = Path(__file__).parent / "assets"
 PATH_VIA_LEAGUE = {
@@ -63,8 +61,7 @@ class Court2DView:
         self._base_court = cv2.imread(path)
         if self._base_court is None:
             raise FileNotFoundError(
-                f"Court image not found: {path}. "
-                "Add nba.png or fiba.png to components/visualization/assets/."
+                f"Court image not found: {path}. Add nba.png or fiba.png to components/visualization/assets/."
             )
 
     def get_frame(
@@ -118,19 +115,14 @@ class Court2DView:
 
 
 def write_2d_court_video(
-    detections: "FrameDetections",
+    detections: FrameDetections,
     output_path: str,
     league: CourtType,
     video_path: str,
 ) -> None:
     """Render 2D court view for each frame and write to video."""
     court_view = Court2DView(league)
-    base_frame = court_view.get_frame(
-        np.empty((0, 2)),
-        np.empty((0, 2)),
-        (0.0, 0.0),
-    )
-    h, w = base_frame.shape[:2]
+    h, w = court_view._base_court.shape[:2]
 
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
@@ -162,7 +154,3 @@ def write_2d_court_video(
         out.write(frame)
 
     out.release()
-
-
-# Backwards compatibility alias
-Flattener = Court2DView

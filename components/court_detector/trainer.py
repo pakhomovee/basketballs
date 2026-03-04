@@ -26,9 +26,7 @@ class CourtDetectionDataset(YOLODataset):
         assert len(self.label_files) == len(self.im_files)
         labels = []
         datasets_to_labels = {}
-        for im_file, lb_file in tqdm(
-            zip(self.im_files, self.label_files), total=len(self.label_files)
-        ):
+        for im_file, lb_file in tqdm(zip(self.im_files, self.label_files), total=len(self.label_files)):
             im = Image.open(im_file)
             im.verify()
             shape = exif_size(im)
@@ -90,9 +88,7 @@ class CourtDetectionDataset(YOLODataset):
             if make_flip:
                 old_label = deepcopy(self.labels[index])
                 for i in range(len(self.labels[index]["cls"])):
-                    self.labels[index]["cls"][i] = SYMMETRIC_MAPPING[
-                        self.labels[index]["cls"][i].item()
-                    ]
+                    self.labels[index]["cls"][i] = SYMMETRIC_MAPPING[self.labels[index]["cls"][i].item()]
             img_and_label = self.get_image_and_label(index)
             if make_flip:
                 self.labels[index] = old_label

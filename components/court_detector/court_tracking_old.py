@@ -59,9 +59,7 @@ def extend_line(line, frame_size, infinity=1e9):
     x1, y1 = line[0]
     x2, y2 = line[1]
 
-    if (not check_point_inside_frame((x1, y1), frame_size)) or (
-        not check_point_inside_frame((x2, y2), frame_size)
-    ):
+    if (not check_point_inside_frame((x1, y1), frame_size)) or (not check_point_inside_frame((x2, y2), frame_size)):
         raise Exception("Line doesn't lie inside the frame!")
 
     min_alpha, max_alpha = -infinity, infinity
@@ -86,9 +84,7 @@ def extend_line(line, frame_size, infinity=1e9):
 
     nx1, ny1, nx2, ny2 = int(round(nx1)), int(round(ny1)), int(round(nx2)), int(round(ny2))
 
-    assert check_point_inside_frame((nx1, ny1), frame_size) and check_point_inside_frame(
-        (nx2, ny2), frame_size
-    )
+    assert check_point_inside_frame((nx1, ny1), frame_size) and check_point_inside_frame((nx2, ny2), frame_size)
 
     return ((nx1, ny1), (nx2, ny2))
 
@@ -129,9 +125,7 @@ def recalculate_reference_points(reference_points, old_frame, frame):
     if len(old_points) < 20:
         return reference_points
 
-    new_points, st, err = cv2.calcOpticalFlowPyrLK(
-        old_frame_gray, frame_gray, old_points, None, **lk_params
-    )
+    new_points, st, err = cv2.calcOpticalFlowPyrLK(old_frame_gray, frame_gray, old_points, None, **lk_params)
     st = st.flatten().astype(dtype=np.bool)
     old_points = old_points[st]
     new_points = new_points[st]

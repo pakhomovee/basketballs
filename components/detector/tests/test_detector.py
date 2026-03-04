@@ -7,6 +7,7 @@ import numpy as np
 from components.detector.detector_model import detect_persons_torch, model
 from components.visualization.bbox import visualize_detection
 
+
 # sample video
 def get_video_path():
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -19,6 +20,7 @@ def get_video_path():
         return path
 
     return None
+
 
 @pytest.fixture
 def sample_frame():
@@ -34,10 +36,12 @@ def sample_frame():
         pytest.fail(f"Could not read frame from video at {video_path}")
     return frame
 
+
 def test_model_load():
     """Test if the model loads correctly."""
     assert model is not None
     assert isinstance(model, torch.nn.Module)
+
 
 def test_detection_output_format(sample_frame):
     """Test if the detection output has the correct format."""
@@ -65,6 +69,7 @@ def test_detection_output_format(sample_frame):
     cv2.imwrite(output_path, vis_frame)
     print(f"\nSaved visualization to: {os.path.abspath(output_path)}")
 
+
 def test_detection_consistency(sample_frame):
     """Test if running detection twice on the same frame yields same results."""
     persons1 = detect_persons_torch(sample_frame)
@@ -73,11 +78,13 @@ def test_detection_consistency(sample_frame):
     if len(persons1) > 0:
         assert persons1[0] == persons2[0]
 
+
 def test_empty_frame():
     """Test behavior with a black frame."""
     black_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
     persons = detect_persons_torch(black_frame)
     assert isinstance(persons, list)
+
 
 if __name__ == "__main__":
     # -s allows stdout/stderr to be seen

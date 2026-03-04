@@ -31,6 +31,7 @@ def download_and_extract(url, extract_dir="."):
     os.remove(zip_path)
     print("Data downloaded and extracted.")
 
+
 def download(url, filename, save_dir="."):
     """
     Download a file from a Yandex Disk public link without extracting.

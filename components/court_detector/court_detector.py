@@ -15,8 +15,12 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 
-from court_detector.court_constants import SMALL_COURT_POINTS, \
-    FIBA_COURT_POINTS, NBA_COURT_POINTS, COURT_TYPE_TO_COURT_POINTS
+from court_detector.court_constants import (
+    SMALL_COURT_POINTS,
+    FIBA_COURT_POINTS,
+    NBA_COURT_POINTS,
+    COURT_TYPE_TO_COURT_POINTS,
+)
 from court_detector.trainer import CourtDetectionTrainer
 from court_detector.prepare_dataset import prepare_dataset
 from common.classes.player import FrameDetections
@@ -40,9 +44,7 @@ def project_homography(points_xy, H):
 class CourtDetector:
     def __init__(
         self,
-        model_path: str | Path = Path(__file__).parent.parent.parent
-        / "models"
-        / "court_detection_model.pt",
+        model_path: str | Path = Path(__file__).parent.parent.parent / "models" / "court_detection_model.pt",
     ):
         self.model = YOLO(model_path)
         self.model_path = model_path
@@ -84,9 +86,7 @@ class CourtDetector:
             close_mosaic=0,
             fliplr=0,
         )
-        best_model_path = (
-            Path(__file__).parent / "runs" / "detect" / project / model_name / "weights" / "best.pt"
-        )
+        best_model_path = Path(__file__).parent / "runs" / "detect" / project / model_name / "weights" / "best.pt"
         self.model = YOLO(best_model_path)
         if save:
             self.model.save(self.model_path)
@@ -105,7 +105,9 @@ class CourtDetector:
         return pred_centers, pred_cls
 
     def predict_court_homography(
-        self, frame_rgb: np.ndarray, court_type: CourtType = CourtType.NBA,
+        self,
+        frame_rgb: np.ndarray,
+        court_type: CourtType = CourtType.NBA,
     ) -> (np.ndarray, np.ndarray, Optional[np.ndarray]):
         court_points = COURT_TYPE_TO_COURT_POINTS[court_type]
         pred_centers, pred_cls = self.predict_keypoints(frame_rgb)

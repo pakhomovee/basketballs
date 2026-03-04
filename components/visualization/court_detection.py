@@ -64,9 +64,7 @@ def load_gt_points(label_path: Path, w: int, h: int):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Visualize GT vs predicted court points on val images."
-    )
+    parser = argparse.ArgumentParser(description="Visualize GT vs predicted court points on val images.")
     parser.add_argument(
         "--model",
         type=Path,
@@ -129,11 +127,7 @@ def main():
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         preds = model.predict(img_rgb, verbose=False, conf=DETECTION_CONF)[0]
         pred_boxes = preds.boxes.xywh.cpu().numpy() if preds.boxes is not None else np.empty((0, 4))
-        pred_cls = (
-            preds.boxes.cls.cpu().numpy().astype(int)
-            if preds.boxes is not None
-            else np.empty((0,), dtype=int)
-        )
+        pred_cls = preds.boxes.cls.cpu().numpy().astype(int) if preds.boxes is not None else np.empty((0,), dtype=int)
         ax.clear()
         ax.imshow(img_rgb)
         for cls_id in np.unique(pred_cls) if len(pred_cls) else []:
@@ -219,9 +213,7 @@ def run_deepsportradar(args):
         pts = np.array(pts, dtype=np.float32)
         types = np.array(types, dtype=int)
         pts_img = project_points(K, R, T, pts)
-        inside = (
-            (pts_img[:, 0] >= 0) & (pts_img[:, 0] < w) & (pts_img[:, 1] >= 0) & (pts_img[:, 1] < h)
-        )
+        inside = (pts_img[:, 0] >= 0) & (pts_img[:, 0] < w) & (pts_img[:, 1] >= 0) & (pts_img[:, 1] < h)
         pts_img, types = pts_img[inside], types[inside]
         ax.clear()
         ax.imshow(img_rgb)
@@ -291,9 +283,7 @@ def run_sportcenter(args):
         pts_xy = pts_world[:, :2]
         pts_types = pts_world[:, 2].astype(int)
         pts_img = project_homography(pts_xy, Hr)
-        inside = (
-            (pts_img[:, 0] >= 0) & (pts_img[:, 0] < w) & (pts_img[:, 1] >= 0) & (pts_img[:, 1] < h)
-        )
+        inside = (pts_img[:, 0] >= 0) & (pts_img[:, 0] < w) & (pts_img[:, 1] >= 0) & (pts_img[:, 1] < h)
         pts_img, pts_types = pts_img[inside], pts_types[inside]
         ax.clear()
         ax.imshow(img_rgb)

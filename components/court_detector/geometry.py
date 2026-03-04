@@ -86,9 +86,7 @@ def _extend_crop_segment(segment, frame_size, min_alpha, max_alpha):
 
     nx1, ny1, nx2, ny2 = int(round(nx1)), int(round(ny1)), int(round(nx2)), int(round(ny2))
 
-    assert check_point_inside_frame((nx1, ny1), frame_size) and check_point_inside_frame(
-        (nx2, ny2), frame_size
-    )
+    assert check_point_inside_frame((nx1, ny1), frame_size) and check_point_inside_frame((nx2, ny2), frame_size)
 
     return ((nx1, ny1), (nx2, ny2))
 
