@@ -14,8 +14,8 @@ _LOGS_MAX_LINES = 5
 # Default colors (BGR)
 _DEFAULT_LEVEL_COLORS = {
     "info": (200, 200, 200),
-    "warn": (0, 200, 255),   # orange
-    "error": (0, 0, 255),    # red
+    "warn": (0, 200, 255),  # orange
+    "error": (0, 0, 255),  # red
     "debug": (150, 150, 150),
 }
 _DEFAULT_SOURCE_COLOR = (255, 200, 100)  # cyan
