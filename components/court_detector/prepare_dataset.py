@@ -19,7 +19,12 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
-from court_detector.court_constants import SMALL_COURT_POINTS, FIBA_COURT_POINTS, MAPPING_ROBOFLOW_COURT_DETECTION
+from court_detector.court_constants import (
+    SMALL_COURT_POINTS,
+    FIBA_COURT_POINTS,
+    MAPPING_ROBOFLOW_COURT_DETECTION,
+    NBA_COURT_POINTS,
+)
 
 JPEG_QUALITY = 50
 SPORTCENTER_FRACTION = 0.2
@@ -108,7 +113,6 @@ def convert_sportcenter(out_dirs, val_split=0.15):
         keep = max(1, int(len(samples) * SPORTCENTER_FRACTION))
         samples = samples[:keep]
 
-    # num_classes = int(max(p[2] for p in SMALL_COURT_POINTS)) + 1
     for img_path, Hr, split in tqdm(samples, desc="sportcenter"):
         img = cv2.imread(str(img_path))
         if img is None:
@@ -146,8 +150,6 @@ def convert_deepsportradar(out_dirs):
     random.shuffle(json_files)
     split_idx = int(len(json_files) * 0.15)
     val_set = set(json_files[:split_idx])
-
-    # num_classes = int(max(p[2] for p in SMALL_COURT_POINTS)) + 1
 
     def project_points(K, R, T, pts):
         pts_cam = R @ pts.T + T.reshape(3, 1)
@@ -245,7 +247,7 @@ def convert_roboflow(out_dirs):
 
 
 def build_data_yaml(out_root: Path):
-    num_classes = int(max(p[2] for p in SMALL_COURT_POINTS)) + 1
+    num_classes = int(max(p[2] for p in NBA_COURT_POINTS)) + 1
     class_names = [f"type_{i}" for i in range(num_classes)]
     data_yaml = out_root / "data.yaml"
     data_yaml.write_text(

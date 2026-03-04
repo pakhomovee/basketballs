@@ -1,11 +1,3 @@
-"""
-Training script for multi-point court detection as tiny boxes.
-
-Each court point from SMALL_COURT_POINTS (with type id) is turned into a small
-bounding box; types that are symmetric share the same class id. Model is YOLOv8
-detector (yolov8n) trained on this custom detection dataset.
-"""
-
 import json
 import shutil
 from pathlib import Path
@@ -45,10 +37,11 @@ class CourtDetector:
     def __init__(
         self,
         model_path: str | Path = Path(__file__).parent.parent.parent / "models" / "court_detection_model.pt",
+        conf=0.25,
     ):
         self.model = YOLO(model_path)
         self.model_path = model_path
-        self.conf = 0.3
+        self.conf = conf
 
     def train(
         self,
@@ -65,6 +58,7 @@ class CourtDetector:
             prepare_dataset(out_root=dataset_path)
         project = "court_detector"
         model_name = "court_keypoints_detector"
+        save_dir = Path(__file__).parent / "runs" / project / model_name
         self.model.train(
             trainer=CourtDetectionTrainer,
             data=str(Path(dataset_path) / "data.yaml"),
@@ -85,6 +79,7 @@ class CourtDetector:
             optimizer="sgd",
             close_mosaic=0,
             fliplr=0,
+            save_dir=str(save_dir),
         )
         best_model_path = Path(__file__).parent / "runs" / "detect" / project / model_name / "weights" / "best.pt"
         self.model = YOLO(best_model_path)
