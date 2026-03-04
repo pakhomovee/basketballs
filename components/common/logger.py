@@ -70,8 +70,8 @@ class Logger:
         """
         defaults = {
             "info": (200, 200, 200),
-            "warn": (0, 200, 255),   # orange in BGR
-            "error": (0, 0, 255),    # red
+            "warn": (0, 200, 255),  # orange in BGR
+            "error": (0, 0, 255),  # red
             "debug": (150, 150, 150),
         }
         lc = level_colors or defaults

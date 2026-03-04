@@ -130,7 +130,6 @@ class CourtDetector:
             return pred_centers, pred_cls, pred_confs, None
         return pred_centers, pred_cls, pred_confs, H
 
-
     def homographies_dist(self, H1, H2, width, height):
         """
         Estimates distance between two homographies.
@@ -151,15 +150,17 @@ class CourtDetector:
             if H is not None:
                 not_none.append(i)
         n = len(not_none)
+
         def get_cost(i, j):
             base_cost = alpha * (abs(i - j) - 1)
             if i == 0 or i == n + 1 or j == 0 or j == n + 1:
                 return base_cost
             pos_i = not_none[i - 1]
             pos_j = not_none[j - 1]
-            diff = abs(pos_i - pos_j)
+            # diff = abs(pos_i - pos_j)
             hdist = self.homographies_dist(homographies[pos_i], homographies[pos_j], width, height)
             return base_cost + hdist
+
         inf = 1e18
         dp = [(inf, -1) for i in range(n + 2)]
 
@@ -175,17 +176,13 @@ class CourtDetector:
             if cur <= n:
                 remaning.append(not_none[cur - 1])
             cur = dp[cur][1]
-        # print(dp)
         remaining = list(reversed(remaning))
-        num_removed = len(not_none) - len(remaning)
         new_homographies = [None for i in range(len(homographies))]
         for i in remaining:
             new_homographies[i] = homographies[i]
-        print("Removed: ", num_removed)
+        # num_removed = len(not_none) - len(remaning)
+        # print("Removed: ", num_removed)
         return new_homographies
-        
-
-        
 
     def run(self, video_path: str, detections: FrameDetections) -> None:
         """
@@ -224,7 +221,6 @@ class CourtDetector:
                 pts = project_homography(np.array([[cx, cy]]), H)
                 if pts.size >= 2:
                     player.court_position = (float(pts[0, 0]), float(pts[0, 1]))
-
 
 
 def main():
