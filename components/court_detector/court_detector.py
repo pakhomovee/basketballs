@@ -125,7 +125,7 @@ class CourtDetector:
         frame_points = np.array(frame_points)
         court_points = np.array(court_points)
         try:
-            H, _ = cv2.findHomography(frame_points, court_points)
+            H, mask = cv2.findHomography(frame_points, court_points)
         except cv2.error:
             return pred_centers, pred_cls, pred_confs, None
         return pred_centers, pred_cls, pred_confs, H

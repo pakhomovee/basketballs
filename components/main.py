@@ -5,6 +5,7 @@ from team_clustering.mock_detector import MockDetector
 from court_detector.court_detector import CourtDetector
 from team_clustering.team_clustering import TeamClustering
 from visualization import write_2d_court_video, make_side_by_side_video
+from smoother import smooth_detection_coordinates
 from common.classes import CourtType
 from common.logger import get_logger
 from common.utils.utils import download
@@ -18,6 +19,7 @@ def main(
     court_type: CourtType = CourtType.NBA,
     k_frames: int = 30,
     output_both: str | None = None,
+    enable_smoothing: bool = True,
 ):
     """
     Full pipeline: detect, court detect, team cluster, generate 2D video.
@@ -30,9 +32,9 @@ def main(
         league: Court type (NBA or FIBA) for flattener.
         k_frames: Sample every k-th frame for team clustering.
     """
-    if not os.path.exists("../models/court_detection_model.pt"):
-        download("https://disk.yandex.ru/d/_dHiheOwN2-R_w", "court_detection_model.pt", "../models")
     get_logger().clear()
+    if not os.path.exists("../models/court_detection_model.pt"):
+        download("https://disk.yandex.ru/d/o7lVmeYl0xmn4g", "court_detection_model.pt", "../models")
     detector = MockDetector(gt_path, normalized=True)
     detections = detector.detect(video_path)
 
@@ -41,6 +43,9 @@ def main(
 
     team_clustering = TeamClustering(seg_model)
     team_clustering.run(video_path, detections, k_frames=k_frames)
+
+    if enable_smoothing:
+        smooth_detection_coordinates(detections)
 
     if output_2d_path is None:
         stem = Path(video_path).stem
@@ -64,6 +69,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_both", default=None, help="Output side by side 2D video path")
     parser.add_argument("--court_type", choices=["nba", "fiba"], default="nba")
     parser.add_argument("--k-frames", type=int, default=30, help="Sample every k frames for clustering")
+    parser.add_argument("--no_smoothing", type=bool, default=False, help="Disable smoothing")
     args = parser.parse_args()
 
     court_type = CourtType.NBA if args.court_type == "nba" else CourtType.FIBA
@@ -75,4 +81,5 @@ if __name__ == "__main__":
         court_type=court_type,
         k_frames=args.k_frames,
         output_both=args.output_both,
+        enable_smoothing=not args.no_smoothing,
     )
