@@ -90,23 +90,27 @@ class CourtDetector:
     def set_prediction_confedence(self, new_conf):
         self.conf = new_conf
 
-    def predict_keypoints(self, frame_rgb) -> (np.ndarray, np.ndarray):
+    def predict_keypoints(self, frame_rgb) -> (np.ndarray, np.ndarray, np.ndarray):
         preds = self.model.predict(frame_rgb, verbose=False, conf=self.conf)[0]
         if preds.boxes is None:
             return np.empty((0, 3))
+        pred_confs = preds.boxes.conf.cpu().numpy()
         pred_boxes = preds.boxes.xywh.cpu().numpy()
         pred_cls = preds.boxes.cls.cpu().numpy().astype(int)
         pred_centers = pred_boxes[:, :2]
         assert pred_centers.shape[0] == pred_cls.shape[0]
-        return pred_centers, pred_cls
+        return pred_centers, pred_cls, pred_confs
 
     def predict_court_homography(
         self,
         frame_rgb: np.ndarray,
         court_type: CourtType = CourtType.NBA,
-    ) -> (np.ndarray, np.ndarray, Optional[np.ndarray]):
+    ) -> (np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]):
+        """
+        Estimates homography from frame to court.
+        """
         court_points = COURT_TYPE_TO_COURT_POINTS[court_type]
-        pred_centers, pred_cls = self.predict_keypoints(frame_rgb)
+        pred_centers, pred_cls, pred_confs = self.predict_keypoints(frame_rgb)
         cls_to_points = defaultdict(list)
         for px, py, pcls in court_points:
             cls_to_points[pcls].append((px, py))
@@ -123,8 +127,65 @@ class CourtDetector:
         try:
             H, _ = cv2.findHomography(frame_points, court_points)
         except cv2.error:
-            return pred_centers, pred_cls, None
-        return pred_centers, pred_cls, H
+            return pred_centers, pred_cls, pred_confs, None
+        return pred_centers, pred_cls, pred_confs, H
+
+
+    def homographies_dist(self, H1, H2, width, height):
+        """
+        Estimates distance between two homographies.
+        """
+        H1 = H1.copy()
+        H2 = H2.copy()
+        H1[:, 0] *= width
+        H1[:, 1] *= height
+        H2[:, 0] *= width
+        H2[:, 1] *= height
+        D = np.linalg.inv(H1) @ H2
+        _, S, _ = np.linalg.svd(D)
+        return np.linalg.cond(D)
+
+    def remove_bad_homographies(self, homographies, width, height, alpha=5, max_skip=5):
+        not_none = []
+        for i, H in enumerate(homographies):
+            if H is not None:
+                not_none.append(i)
+        n = len(not_none)
+        def get_cost(i, j):
+            base_cost = alpha * (abs(i - j) - 1)
+            if i == 0 or i == n + 1 or j == 0 or j == n + 1:
+                return base_cost
+            pos_i = not_none[i - 1]
+            pos_j = not_none[j - 1]
+            diff = abs(pos_i - pos_j)
+            hdist = self.homographies_dist(homographies[pos_i], homographies[pos_j], width, height)
+            return base_cost + hdist
+        inf = 1e18
+        dp = [(inf, -1) for i in range(n + 2)]
+
+        dp[0] = (0, -1)
+        for i in range(1, n + 2):
+            for j in range(max(0, i - max_skip), i):
+                cost = dp[j][0]
+                cost += get_cost(j, i)
+                dp[i] = min(dp[i], (cost, j))
+        remaning = []
+        cur = n + 1
+        while cur > 0:
+            if cur <= n:
+                remaning.append(not_none[cur - 1])
+            cur = dp[cur][1]
+        # print(dp)
+        remaining = list(reversed(remaning))
+        num_removed = len(not_none) - len(remaning)
+        new_homographies = [None for i in range(len(homographies))]
+        for i in remaining:
+            new_homographies[i] = homographies[i]
+        print("Removed: ", num_removed)
+        return new_homographies
+        
+
+        
 
     def run(self, video_path: str, detections: FrameDetections) -> None:
         """
@@ -136,27 +197,34 @@ class CourtDetector:
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video: {video_path}")
 
+        homographies = []
         frame_id = 0
+
         while True:
             ret, frame_bgr = cap.read()
             if not ret:
                 break
+            height, width, _ = frame_bgr.shape
             frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-            _, _, H = self.predict_court_homography(frame_rgb)
-            if H is not None:
-                for player in detections.get(frame_id, []):
-                    x1, y1, x2, y2 = player.bbox
-                    cx = (x1 + x2) / 2.0
-                    cy = float(y2)  # bottom middle of bbox
-                    pts = project_homography(np.array([[cx, cy]]), H)
-                    if pts.size >= 2:
-                        player.court_position = (float(pts[0, 0]), float(pts[0, 1]))
-            else:
-                get_logger().log(
-                    frame_id, "Homography failed (court keypoints insufficient)", level="warn", source="court_detector"
-                )
+            pred_centers, pred_cls, pred_confs, H = self.predict_court_homography(frame_rgb)
+            homographies.append(H)
             frame_id += 1
+
         cap.release()
+
+        new_homographies = self.remove_bad_homographies(homographies, width, height)
+
+        for frame_id, H in enumerate(new_homographies):
+            if H is None:
+                continue
+            for player in detections.get(frame_id, []):
+                x1, y1, x2, y2 = player.bbox
+                cx = (x1 + x2) / 2.0
+                cy = float(y2)  # bottom middle of bbox
+                pts = project_homography(np.array([[cx, cy]]), H)
+                if pts.size >= 2:
+                    player.court_position = (float(pts[0, 0]), float(pts[0, 1]))
+
 
 
 def main():
