@@ -16,6 +16,7 @@ from court_detector.court_constants import (
 from court_detector.trainer import CourtDetectionTrainer
 from court_detector.prepare_dataset import prepare_dataset
 from common.classes.player import FrameDetections
+from common.logger import get_logger
 
 from typing import Optional
 from collections import defaultdict
@@ -150,6 +151,10 @@ class CourtDetector:
                     pts = project_homography(np.array([[cx, cy]]), H)
                     if pts.size >= 2:
                         player.court_position = (float(pts[0, 0]), float(pts[0, 1]))
+            else:
+                get_logger().log(
+                    frame_id, "Homography failed (court keypoints insufficient)", level="warn", source="court_detector"
+                )
             frame_id += 1
         cap.release()
 

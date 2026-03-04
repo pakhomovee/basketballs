@@ -6,6 +6,7 @@ from court_detector.court_detector import CourtDetector
 from team_clustering.team_clustering import TeamClustering
 from visualization import write_2d_court_video, make_side_by_side_video
 from common.classes import CourtType
+from common.logger import get_logger
 from common.utils.utils import download
 
 
@@ -31,6 +32,7 @@ def main(
     """
     if not os.path.exists("../models/court_detection_model.pt"):
         download("https://disk.yandex.ru/d/_dHiheOwN2-R_w", "court_detection_model.pt", "../models")
+    get_logger().clear()
     detector = MockDetector(gt_path, normalized=True)
     detections = detector.detect(video_path)
 
