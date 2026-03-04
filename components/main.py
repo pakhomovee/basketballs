@@ -4,7 +4,7 @@ from pathlib import Path
 from team_clustering.mock_detector import MockDetector
 from court_detector.court_detector import CourtDetector
 from team_clustering.team_clustering import TeamClustering
-from visualization.court_2d import write_2d_court_video
+from visualization import write_2d_court_video, make_side_by_side_video
 from common.classes import CourtType
 from common.utils.utils import download
 
@@ -14,8 +14,9 @@ def main(
     gt_path: str,
     seg_model: str = "yolov8n-seg.pt",
     output_2d_path: str | None = None,
-    league: CourtType = CourtType.NBA,
+    court_type: CourtType = CourtType.NBA,
     k_frames: int = 30,
+    output_both: str | None = None
 ):
     """
     Full pipeline: detect, court detect, team cluster, generate 2D video.
@@ -43,8 +44,11 @@ def main(
         stem = Path(video_path).stem
         output_2d_path = str(Path(video_path).parent / f"{stem}_2d.mp4")
 
-    write_2d_court_video(detections, output_2d_path, league, video_path)
+    write_2d_court_video(detections, output_2d_path, court_type, video_path)
     print(f"Saved 2D video to {output_2d_path}")
+
+    if output_both is not None:
+        make_side_by_side_video(video_path, output_2d_path, output_both)
 
 
 if __name__ == "__main__":
@@ -55,16 +59,18 @@ if __name__ == "__main__":
     parser.add_argument("gt_path", help="Path to ground-truth annotations (MOT format)")
     parser.add_argument("--seg-model", default="yolov8n-seg.pt", help="YOLO segmentation model")
     parser.add_argument("--output", "-o", default=None, help="Output 2D video path")
-    parser.add_argument("--league", choices=["nba", "fiba"], default="nba")
+    parser.add_argument("--output_both", default=None, help="Output side by side 2D video path")
+    parser.add_argument("--court_type", choices=["nba", "fiba"], default="nba")
     parser.add_argument("--k-frames", type=int, default=30, help="Sample every k frames for clustering")
     args = parser.parse_args()
 
-    league = CourtType.NBA if args.league == "nba" else CourtType.FIBA
+    court_type = CourtType.NBA if args.court_type == "nba" else CourtType.FIBA
     main(
         args.video_path,
         args.gt_path,
         seg_model=args.seg_model,
         output_2d_path=args.output,
-        league=league,
+        court_type=court_type,
         k_frames=args.k_frames,
+        output_both=args.output_both,
     )
