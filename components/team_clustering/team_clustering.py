@@ -70,14 +70,14 @@ class TeamClustering:
         tracks = collections.defaultdict(list)
         self.sample_detections = []
         batch_crops, batch_ids = [], []
-        frame_id = 1
+        frame_id = 0
 
         for _ in tqdm(range(total_frames), desc="Extracting features"):
             ret, frame = cap.read()
             if not ret:
                 break
 
-            if frame_id == 1 or (k_frames > 1 and (frame_id - 1) % k_frames == 0):
+            if frame_id == 0 or (k_frames > 0 and frame_id % k_frames == 0):
                 for player in detections.get(frame_id, []):
                     x1, y1, x2, y2 = map(int, player.bbox)
                     h, w = frame.shape[:2]

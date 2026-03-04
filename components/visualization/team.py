@@ -20,7 +20,7 @@ def render_clustered_video(video_path: str, detections: FrameDetections, output_
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-    frame_id = 1
+    frame_id = 0
 
     for _ in tqdm(range(total), desc="Writing video"):
         ret, frame = cap.read()

@@ -135,7 +135,7 @@ class CourtDetector:
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video: {video_path}")
 
-        frame_id = 1
+        frame_id = 0
         while True:
             ret, frame_bgr = cap.read()
             if not ret:
