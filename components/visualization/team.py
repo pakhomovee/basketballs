@@ -6,12 +6,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 
-from common.classes import FrameDetections
+from common.classes import PlayersDetections
 
 TEAM_COLORS = [(0, 0, 255), (255, 0, 0)]  # Red, Blue (BGR)
 
 
-def render_clustered_video(video_path: str, detections: FrameDetections, output_path: str):
+def render_clustered_video(video_path: str, detections: PlayersDetections, output_path: str):
     """Write a new video with bounding boxes coloured by team assignment."""
     cap = cv2.VideoCapture(video_path)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))

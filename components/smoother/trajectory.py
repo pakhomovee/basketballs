@@ -2,11 +2,11 @@
 
 import numpy as np
 
-from common.classes.player import FrameDetections
+from common.classes.player import PlayersDetections
 
 
 def extract_player_trajectories_with_gaps(
-    detections: FrameDetections,
+    detections: PlayersDetections,
 ) -> dict[int, list[tuple[int, float | None, float | None]]]:
     """Extract per-player (frame_id, x_or_None, y_or_None) including frames with missing court_position."""
     trajectories: dict[int, list[tuple[int, float | None, float | None]]] = {}

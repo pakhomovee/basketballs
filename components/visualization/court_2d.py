@@ -13,7 +13,7 @@ import numpy as np
 from tqdm.auto import tqdm
 
 from common.classes import CourtType
-from common.classes import FrameDetections
+from common.classes import PlayersDetections
 
 _ASSETS_DIR = Path(__file__).parent / "assets"
 PATH_VIA_LEAGUE = {
@@ -115,7 +115,7 @@ class Court2DView:
 
 
 def write_2d_court_video(
-    detections: FrameDetections,
+    detections: PlayersDetections,
     output_path: str,
     league: CourtType,
     video_path: str,

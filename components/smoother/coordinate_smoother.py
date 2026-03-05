@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from common.classes.player import FrameDetections
+from common.classes.player import PlayersDetections
 from kalmanlib import KalmanFilter
 
 from .filter import filter_signal_with_missing
@@ -11,7 +11,7 @@ from .trajectory import extract_player_trajectories_with_gaps, initial_state_4d
 
 
 def smooth_detection_coordinates(
-    detections: FrameDetections,
+    detections: PlayersDetections,
     *,
     A: np.ndarray | None = None,
     B: np.ndarray | None = None,
@@ -26,7 +26,7 @@ def smooth_detection_coordinates(
     when homography fails.
 
     Args:
-        detections: FrameDetections to smooth (modified in-place).
+        detections: PlayersDetections to smooth (modified in-place).
         A: Dynamics matrix (4,4). Default: constant-velocity model.
         B: Observation matrix (2,4). Default: observe [x,y] from state.
         Rx: Observation noise covariance (2,2). Default: 0.1*eye(2).

@@ -1,10 +1,10 @@
 import collections
 import cv2
 
-from common.classes.player import Player, FrameDetections
+from common.classes.player import Player, PlayersDetections
 
 
-def load_ground_truth(gt_path: str, video_path: str) -> FrameDetections:
+def load_ground_truth(gt_path: str, video_path: str) -> PlayersDetections:
     """
     Load ground truth with normalized coordinates (x_center, y_center, w, h)
     and convert them to absolute pixel bboxes in xyxy format.
@@ -16,7 +16,7 @@ def load_ground_truth(gt_path: str, video_path: str) -> FrameDetections:
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
 
-    gt_data: FrameDetections = collections.defaultdict(list)
+    gt_data: PlayersDetections = collections.defaultdict(list)
     with open(gt_path, "r") as f:
         for line in f:
             parts = line.strip().split(",")
@@ -46,12 +46,12 @@ def load_ground_truth(gt_path: str, video_path: str) -> FrameDetections:
     return gt_data
 
 
-def load_ground_truth_absolute(gt_path: str) -> FrameDetections:
+def load_ground_truth_absolute(gt_path: str) -> PlayersDetections:
     """
     Load ground truth with absolute coordinates (x, y, w, h)
     and convert to xyxy format.
     """
-    gt_data: FrameDetections = collections.defaultdict(list)
+    gt_data: PlayersDetections = collections.defaultdict(list)
     with open(gt_path, "r") as f:
         for line in f:
             parts = line.strip().split(",")

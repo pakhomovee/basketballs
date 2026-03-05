@@ -1,4 +1,4 @@
-from common.classes.player import FrameDetections
+from common.classes.player import PlayersDetections
 from team_clustering.ground_truth import load_ground_truth, load_ground_truth_absolute
 
 
@@ -20,7 +20,7 @@ class MockDetector:
         self.gt_path = gt_path
         self.normalized = normalized
 
-    def detect(self, video_path: str) -> FrameDetections:
+    def detect(self, video_path: str) -> PlayersDetections:
         """
         Return per-frame detections loaded from ground-truth annotations.
 

@@ -6,7 +6,7 @@ from sklearn.cluster import KMeans
 from tqdm.auto import tqdm
 
 from common.utils.utils import get_device
-from common.classes.player import Player, FrameDetections
+from common.classes.player import Player, PlayersDetections
 from team_clustering.embedding import PlayerEmbedder
 
 try:
@@ -41,7 +41,7 @@ class TeamClustering:
     def run(
         self,
         video_path: str,
-        detections: FrameDetections,
+        detections: PlayersDetections,
         k_frames: int = 1,
         batch_size: int = 32,
     ):

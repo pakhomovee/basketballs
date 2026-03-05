@@ -15,7 +15,7 @@ from court_detector.court_constants import (
 )
 from court_detector.trainer import CourtDetectionTrainer
 from court_detector.prepare_dataset import prepare_dataset
-from common.classes.player import FrameDetections
+from common.classes.player import PlayersDetections
 from common.logger import get_logger
 
 from typing import Optional
@@ -184,7 +184,7 @@ class CourtDetector:
         # print("Removed: ", num_removed)
         return new_homographies
 
-    def run(self, video_path: str, detections: FrameDetections) -> None:
+    def run(self, video_path: str, detections: PlayersDetections) -> None:
         """
         Process video frame-by-frame, compute homography, and enrich each
         :class:`Player` with ``court_position`` (x_m, y_m in meters).
