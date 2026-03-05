@@ -1,11 +1,5 @@
-from detector import Detector
-
-"""
-Детекция баскетбольного мяча с помощью Ultralytics YOLO (COCO, класс "sports ball").
-
-Аналогично ball_detector.py, но вместо Faster R-CNN используется YOLOv8.
-"""
 from pathlib import Path
+from detector import Detector
 
 import cv2
 import numpy as np
@@ -56,8 +50,6 @@ def video_with_ball_bbox_yolo(
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
     color_yolo = (0, 165, 255)  # BGR оранжевый (мяч)
-    color_template = (0, 0, 255)  # BGR красный (мяч)
-    color_interp = (0, 255, 0)  # BGR зелёный (мяч)
     color_player = (255, 165, 0)  # BGR голубой (игроки, только YOLO)
     thickness = 2
 
