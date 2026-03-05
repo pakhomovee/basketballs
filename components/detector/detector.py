@@ -7,8 +7,8 @@ from common.classes.player import PlayersDetections, Player
 from tqdm import tqdm
 from pathlib import Path
 
-# names: ['ball', 'number', 'player', 'player-dribble', 'player-fall', 'player-jump-shot', 'player-layup', 'player-screen',
-# 'player-shot-block', 'referee', 'rim']
+# names: ['ball', 'number', 'player', 'player-dribble', 'player-fall', 'player-jump-shot', 'player-layup', 
+# 'player-screen', 'player-shot-block', 'referee', 'rim']
 
 
 class Detector:
