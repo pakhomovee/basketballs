@@ -13,7 +13,7 @@ class Player:
         - **Court detector**:    ``court_position``
     """
 
-    player_id: int
+    player_id: int = -1
     bbox: list[int] = field(default_factory=list)  # [x1, y1, x2, y2]
 
     # Enriched by tracker
@@ -27,4 +27,4 @@ class Player:
 
 
 # frame_id -> list of Player detections for that frame
-FrameDetections = dict[int, list[Player]]
+PlayersDetections = dict[int, list[Player]]

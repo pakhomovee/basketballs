@@ -9,11 +9,12 @@ from smoother import smooth_detection_coordinates
 from common.classes import CourtType
 from common.logger import get_logger
 from common.utils.utils import download
+from detector import Detector, get_video_players_detections
 
 
 def main(
     video_path: str,
-    gt_path: str,
+    gt_path: str | None = None,
     seg_model: str = "yolov8n-seg.pt",
     output_2d_path: str | None = None,
     court_type: CourtType = CourtType.NBA,
@@ -35,8 +36,14 @@ def main(
     get_logger().clear()
     if not os.path.exists("../models/court_detection_model.pt"):
         download("https://disk.yandex.ru/d/o7lVmeYl0xmn4g", "court_detection_model.pt", "../models")
-    detector = MockDetector(gt_path, normalized=True)
-    detections = detector.detect(video_path)
+    if not os.path.exists("../models/yolo26m_object_detection.pt"):
+        download("https://disk.yandex.ru/d/MAGAbYxRFEvX6w", "yolo26m_object_detection.pt", "../models")
+    # detector = MockDetector(gt_path, normalized=True)
+    # detections = detector.detect(video_path)
+    # print(detections)
+    clever_detector = Detector()
+    all_detections = clever_detector.detect_video(video_path)
+    detections = get_video_players_detections(all_detections)
 
     court_detector = CourtDetector()
     court_detector.run(video_path, detections)
@@ -63,7 +70,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("video_path", help="Path to input video")
-    parser.add_argument("gt_path", help="Path to ground-truth annotations (MOT format)")
+    parser.add_argument("--gt_path", default=None, help="Path to ground-truth annotations (MOT format)")
     parser.add_argument("--seg-model", default="yolov8n-seg.pt", help="YOLO segmentation model")
     parser.add_argument("--output", "-o", default=None, help="Output 2D video path")
     parser.add_argument("--output_both", default=None, help="Output side by side 2D video path")
@@ -73,6 +80,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     court_type = CourtType.NBA if args.court_type == "nba" else CourtType.FIBA
+    print(1)
     main(
         args.video_path,
         args.gt_path,
