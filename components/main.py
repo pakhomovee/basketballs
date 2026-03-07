@@ -1,11 +1,14 @@
 import os
 from pathlib import Path
 
-from team_clustering.mock_detector import MockDetector
+from cache import load_detections_cache, save_detections_cache
 from court_detector.court_detector import CourtDetector
+from team_clustering.embedding import extract_player_embeddings
+from team_clustering.mock_detector import MockDetector
 from team_clustering.team_clustering import TeamClustering
+from tracking import PlayerTracker
 from visualization import write_2d_court_video, make_side_by_side_video
-from smoother import smooth_detection_coordinates
+from smoother import interpolate_track_gaps, smooth_detection_coordinates
 from common.classes import CourtType
 from common.logger import get_logger
 from common.utils.utils import download
@@ -21,6 +24,10 @@ def main(
     k_frames: int = 30,
     output_both: str | None = None,
     enable_smoothing: bool = True,
+    max_track_length: int | None = 60,
+    no_cache: bool = False,
+    no_cache_detector: bool = False,
+    no_cache_embeds: bool = False,
 ):
     """
     Full pipeline: detect, court detect, team cluster, generate 2D video.
@@ -32,24 +39,84 @@ def main(
         output_2d_path: Path for output 2D court video. Default: <video_stem>_2d.mp4
         league: Court type (NBA or FIBA) for flattener.
         k_frames: Sample every k-th frame for team clustering.
+        max_track_length: Cap track length in frames (~2 sec at 30fps) for dense crowds.
+                         None = no limit.
     """
     get_logger().clear()
     if not os.path.exists("../models/court_detection_model.pt"):
         download("https://disk.yandex.ru/d/o7lVmeYl0xmn4g", "court_detection_model.pt", "../models")
     if not os.path.exists("../models/yolo26m_object_detection.pt"):
         download("https://disk.yandex.ru/d/MAGAbYxRFEvX6w", "yolo26m_object_detection.pt", "../models")
-    # detector = MockDetector(gt_path, normalized=True)
-    # detections = detector.detect(video_path)
-    # print(detections)
-    clever_detector = Detector()
-    all_detections = clever_detector.detect_video(video_path)
-    detections = get_video_players_detections(all_detections)
+    if gt_path is None:
+        # no_cache overrides the other two (full disable)
+        cache_detector = not (no_cache or no_cache_detector)
+        cache_embeds = not (no_cache or no_cache_embeds)
+        save_cache = not no_cache
 
-    court_detector = CourtDetector()
-    court_detector.run(video_path, detections)
+        detections = load_detections_cache(
+            video_path, seg_model,
+            use_detector_cache=cache_detector,
+            use_embeddings_cache=cache_embeds,
+        )
+        if detections is None:
+            detector = Detector()
+            all_detections = detector.detect_video(video_path)
+            detections = get_video_players_detections(all_detections)
+            court_detector = CourtDetector()
+            court_detector.run(video_path, detections)
+            extract_player_embeddings(video_path, detections, seg_model=seg_model)
+            if save_cache:
+                save_detections_cache(
+                    video_path, detections, seg_model,
+                    use_detector_cache=cache_detector,
+                    use_embeddings_cache=cache_embeds,
+                )
+        else:
+            if no_cache_embeds and not no_cache:
+                # Loaded bbox + court, but recompute embeddings
+                for players in detections.values():
+                    for p in players:
+                        p.embedding = None
+                extract_player_embeddings(video_path, detections, seg_model=seg_model)
+                save_detections_cache(video_path, detections, seg_model)
+            else:
+                parts = []
+                if cache_detector:
+                    parts.append("detections")
+                if cache_embeds:
+                    parts.append("embeddings")
+                print(f"Loaded {' and '.join(parts)} from cache")
+    else:
+        detector = MockDetector(gt_path, normalized=True)
+        detections = detector.detect(video_path)
+        court_detector = CourtDetector()
+        court_detector.run(video_path, detections)
+        extract_player_embeddings(video_path, detections, seg_model=seg_model)
 
-    team_clustering = TeamClustering(seg_model)
-    team_clustering.run(video_path, detections, k_frames=k_frames)
+    tracker = PlayerTracker(max_track_length=max_track_length)
+    tracker.track(detections)
+
+    team_clustering = TeamClustering()
+    team_clustering.run(detections, k_frames=k_frames)
+
+    for threshold in [0.001, 0.005, 0.01, 0.03, 0.07, 0.1, 0.2, 0.3, 0.5, 0.7, 0.8, 0.85, 0.9]:
+        track_id_to_team = {
+            p.player_id: p.team_id
+            for players in detections.values()
+            for p in players
+            if p.player_id >= 0 and p.team_id is not None
+        }
+        tracker.merge_tracks(
+            max_tracks=10,
+            detections=detections,
+            track_id_to_team=track_id_to_team,
+            cost_threshold=threshold
+        )
+        team_clustering.run(detections, k_frames=k_frames)
+        if len(tracker.tracks) <= 10:
+            break
+
+    #interpolate_track_gaps(detections, max_distance=4.0)
 
     if enable_smoothing:
         smooth_detection_coordinates(detections)
@@ -62,7 +129,7 @@ def main(
     print(f"Saved 2D video to {output_2d_path}")
 
     if output_both is not None:
-        make_side_by_side_video(video_path, output_2d_path, output_both)
+        make_side_by_side_video(video_path, output_2d_path, output_both, detections=detections)
 
 
 if __name__ == "__main__":
@@ -76,11 +143,14 @@ if __name__ == "__main__":
     parser.add_argument("--output_both", default=None, help="Output side by side 2D video path")
     parser.add_argument("--court_type", choices=["nba", "fiba"], default="nba")
     parser.add_argument("--k-frames", type=int, default=30, help="Sample every k frames for clustering")
+    parser.add_argument("--max-track-length", type=int, default=60, help="Max track length. 0 = no limit")
     parser.add_argument("--no_smoothing", type=bool, default=False, help="Disable smoothing")
+    parser.add_argument("--no-cache", action="store_true", help="Disable all caching (don't load, don't save)")
+    parser.add_argument("--no-cache-detector", action="store_true",help="Don't use cache for detector output")
+    parser.add_argument("--no-cache-embeds", action="store_true", help="Don't use cache for embeddings")
     args = parser.parse_args()
 
     court_type = CourtType.NBA if args.court_type == "nba" else CourtType.FIBA
-    print(1)
     main(
         args.video_path,
         args.gt_path,
@@ -90,4 +160,8 @@ if __name__ == "__main__":
         k_frames=args.k_frames,
         output_both=args.output_both,
         enable_smoothing=not args.no_smoothing,
+        max_track_length=args.max_track_length or None,
+        no_cache=args.no_cache,
+        no_cache_detector=args.no_cache_detector,
+        no_cache_embeds=args.no_cache_embeds,
     )

@@ -1,4 +1,7 @@
 .cache/
+*.detections_cache.*.pkl
+*.detections_cache.pkl
+*.embeddings_cache.*.pkl
 .vscode/
 bazel-*
 *.pyc
@@ -15,3 +18,4 @@ models
 *zip
 *out
 components/tracking/tracking
+dataset/deepsport
