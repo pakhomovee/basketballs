@@ -22,6 +22,13 @@ _DEFAULT_SOURCE_COLOR = (255, 200, 100)  # cyan
 _DEFAULT_MESSAGE_COLOR = (220, 220, 220)
 _DEFAULT_EMPTY_COLOR = (120, 120, 120)
 
+# BGR colors for team IDs in side-by-side bboxes
+_TEAM_COLORS = {
+    0: (0, 165, 255),   # orange
+    1: (255, 100, 0),   # blue
+}
+_TEAM_UNKNOWN_COLOR = (0, 255, 0)  # green
+
 
 def _render_logs_panel(
     width: int,
@@ -79,6 +86,7 @@ def make_side_by_side_video(
     bottom_video_path: str,
     output_path: str,
     *,
+    detections=None,  # dict[int, list[Player]] | None
     show_logs: bool = True,
     log_level_colors: dict[str, tuple[int, int, int]] | None = None,
     log_source_color: tuple[int, int, int] | None = None,
@@ -87,11 +95,13 @@ def make_side_by_side_video(
 ) -> None:
     """
     Create video with top (real) and bottom (2D projection) views.
+    Optionally draws bounding boxes with IDs on the top video if `detections` is provided.
     Optionally adds a logs panel at the bottom showing logs for each frame.
 
     top_video_path    — path to first (top) video.
     bottom_video_path — path to second (bottom) video.
     output_path       — path to output video.
+    detections        — (optional) players dict to draw on top video.
     show_logs         — if True, add logs panel for current frame (default True).
     log_level_colors  — BGR colors per level: {"info": (b,g,r), "warn": ..., "error": ..., "debug": ...}.
     log_source_color  — BGR color for [source] tag.
@@ -138,6 +148,19 @@ def make_side_by_side_video(
 
             if frame_top.shape[:2] != (top_h, top_w):
                 frame_top = cv2.resize(frame_top, (target_w, top_h))
+
+            # Draw player IDs and bboxes if detections provided; color by team_id
+            if detections is not None and frame_id in detections:
+                for player in detections[frame_id]:
+                    if player.bbox:
+                        x1, y1, x2, y2 = map(int, player.bbox)
+                        color = _TEAM_COLORS.get(player.team_id, _TEAM_UNKNOWN_COLOR)
+                        cv2.rectangle(frame_top, (x1, y1), (x2, y2), color, 2)
+                        label = str(player.player_id)
+                        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                        cv2.rectangle(frame_top, (x1, y1 - th - 4), (x1 + tw + 2, y1), color, -1)
+                        cv2.putText(frame_top, label, (x1 + 1, y1 - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+
             frame_bottom = cv2.resize(frame_bottom, (target_bottom_w, target_bottom_h))
 
             combined = np.concatenate([frame_top, frame_bottom], axis=0)
