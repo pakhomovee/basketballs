@@ -19,6 +19,7 @@ class Player:
 
     player_id: int = -1
     bbox: list[int] = field(default_factory=list)  # [x1, y1, x2, y2]
+    confidence: float | None = None
 
     # Enriched by embedding extraction (mask-based color histograms, for team clustering)
     embedding: np.ndarray | None = None

@@ -15,6 +15,7 @@ from filterpy.kalman import KalmanFilter
 
 class TrackState:
     """Track lifecycle states."""
+
     TENTATIVE = 0
     CONFIRMED = 1
 
@@ -24,10 +25,9 @@ class Track:
 
     _GALLERY_MAX = 30
 
-    def __init__(self, track_id: int, meas: dict, *,
-                 dt: float = 1 / 30,
-                 measurement_noise: float = 2.0,
-                 n_init: int = 3):
+    def __init__(
+        self, track_id: int, meas: dict, *, dt: float = 1 / 30, measurement_noise: float = 2.0, n_init: int = 3
+    ):
         self.track_id = track_id
         self.state = TrackState.TENTATIVE
         self._n_init = n_init
@@ -62,9 +62,17 @@ class Track:
         self.time_since_update = 0
 
     @classmethod
-    def from_player(cls, track_id: int, player, frame_id: int, *,
-                    dt: float = 1 / 30, measurement_noise: float = 2.0,
-                    n_init: int = 3, embedding: np.ndarray | None = None):
+    def from_player(
+        cls,
+        track_id: int,
+        player,
+        frame_id: int,
+        *,
+        dt: float = 1 / 30,
+        measurement_noise: float = 2.0,
+        n_init: int = 3,
+        embedding: np.ndarray | None = None,
+    ):
         """Build track directly from a Player object."""
         fc = list(player.court_position) if player.court_position else [0.0, 0.0]
         meas = {
@@ -74,8 +82,7 @@ class Track:
         }
         if embedding is not None:
             meas["embedding"] = embedding
-        return cls(track_id, meas, dt=dt, measurement_noise=measurement_noise,
-                   n_init=n_init)
+        return cls(track_id, meas, dt=dt, measurement_noise=measurement_noise, n_init=n_init)
 
     def predict(self):
         """Predict state and bbox one step ahead."""
@@ -116,8 +123,7 @@ class Track:
         if self.state == TrackState.TENTATIVE and self.hits >= self._n_init:
             self.state = TrackState.CONFIRMED
 
-    def update_from_player(self, player, frame_id: int,
-                           embedding: np.ndarray | None = None):
+    def update_from_player(self, player, frame_id: int, embedding: np.ndarray | None = None):
         """Update directly from a Player object."""
         meas: dict = {"bbox": player.bbox, "_frame_id": frame_id}
         if player.court_position is not None:

@@ -23,6 +23,7 @@ from tracking.min_cost_flow import MinCostFlow
 logger = logging.getLogger(__name__)
 S, T = 0, 1
 
+
 # Node layout: S=0, T=1, d_i_in=2+2i, d_i_out=2+2i+1, oof_i=2+2*N+i, start_out, end_out
 def _det_in(i: int, n_det: int) -> int:
     return 2 + 2 * i
@@ -208,7 +209,6 @@ class FlowTracker:
             else:
                 mcf.add_edge(oof_node, end_out, 1, self.exit_cost)
 
-
         n_links = 0
         n_oof_links = 0
 
@@ -268,7 +268,10 @@ class FlowTracker:
 
         logger.info(
             "Flow graph: %d detections, %d link edges, %d oof edges, %d nodes",
-            n_det, n_links, n_oof_links, n_nodes,
+            n_det,
+            n_links,
+            n_oof_links,
+            n_nodes,
         )
 
         # --- Solve ---
@@ -331,14 +334,9 @@ class FlowTracker:
         bbox_i = player_i.bbox
         bbox_j = player_j.bbox
 
-        if (
-            bbox_i
-            and bbox_j
-            and len(bbox_i) >= 4
-            and len(bbox_j) >= 4
-        ):
+        if bbox_i and bbox_j and len(bbox_i) >= 4 and len(bbox_j) >= 4:
             px_dist = bbox_bottom_mid_distance(bbox_i, bbox_j)
-            max_px = self.bbox_gate * (frame_gap ** 0.5)
+            max_px = self.bbox_gate * (frame_gap**0.5)
             if px_dist > max_px:
                 return None
             spatial_cost = px_dist / max(max_px, 1e-6)
@@ -352,12 +350,7 @@ class FlowTracker:
         iou_cost = 0.0
         iou_fade = 0.0
 
-        if (
-            frame_gap <= 5
-            and bbox_i and bbox_j
-            and len(bbox_i) >= 4
-            and len(bbox_j) >= 4
-        ):
+        if frame_gap <= 5 and bbox_i and bbox_j and len(bbox_i) >= 4 and len(bbox_j) >= 4:
             iou_cost = 1.0 - bbox_iou(bbox_i, bbox_j)
             iou_fade = max(0.0, 1.0 - (frame_gap - 1) / 5.0)
 

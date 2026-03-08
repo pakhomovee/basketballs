@@ -47,12 +47,8 @@ class _MergeGroup:
             indices=[idx],
             frames=set(fids),
             gallery=list(getattr(track, "gallery", []) or []),
-            first_bbox=(
-                np.asarray(first_b, dtype=float).copy() if first_b is not None else None
-            ),
-            last_bbox=(
-                np.asarray(last_b, dtype=float).copy() if last_b is not None else None
-            ),
+            first_bbox=(np.asarray(first_b, dtype=float).copy() if first_b is not None else None),
+            last_bbox=(np.asarray(last_b, dtype=float).copy() if last_b is not None else None),
             first_frame=min(fids) if fids else 0,
             last_frame=max(fids) if fids else 0,
             team=team,
@@ -198,11 +194,7 @@ def greedy_merge(
     # One group per track
     groups: dict[int, _MergeGroup] = {}
     for i in range(n):
-        team = (
-            track_id_to_team.get(getattr(tracks[i], "track_id", None))
-            if track_id_to_team
-            else None
-        )
+        team = track_id_to_team.get(getattr(tracks[i], "track_id", None)) if track_id_to_team else None
         groups[i] = _MergeGroup.from_track(tracks[i], i, team=team)
 
     parent = list(range(n))
@@ -329,9 +321,7 @@ def merge_tracks_into(
         for t in cluster_tracks:
             fids = getattr(t, "frame_ids", [])
             if fids and min(fids) == first_fid:
-                base._first_bbox = np.asarray(
-                    getattr(t, "_first_bbox", t.bbox), dtype=float
-                ).copy()
+                base._first_bbox = np.asarray(getattr(t, "_first_bbox", t.bbox), dtype=float).copy()
                 break
 
         merged.append(base)

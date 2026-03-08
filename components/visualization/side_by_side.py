@@ -24,8 +24,8 @@ _DEFAULT_EMPTY_COLOR = (120, 120, 120)
 
 # BGR colors for team IDs in side-by-side bboxes
 _TEAM_COLORS = {
-    0: (0, 165, 255),   # orange
-    1: (255, 100, 0),   # blue
+    0: (0, 165, 255),  # orange
+    1: (255, 100, 0),  # blue
 }
 _TEAM_UNKNOWN_COLOR = (0, 255, 0)  # green
 
