@@ -20,8 +20,11 @@ class Player:
     player_id: int = -1
     bbox: list[int] = field(default_factory=list)  # [x1, y1, x2, y2]
 
-    # Enriched by embedding extraction (mask-based, before tracking)
+    # Enriched by embedding extraction (mask-based color histograms, for team clustering)
     embedding: np.ndarray | None = None
+
+    # Enriched by ReID model (learned identity features, for tracker appearance matching)
+    reid_embedding: np.ndarray | None = None
 
     # Enriched by tracker
     speed: float | None = None

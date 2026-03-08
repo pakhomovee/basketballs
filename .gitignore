@@ -19,3 +19,5 @@ models
 *out
 components/tracking/tracking
 dataset/deepsport
+dataset/data_reid
+dataset/basketball*
