@@ -78,12 +78,12 @@ class TeamClustering:
             return {}
 
         embedding = features
-        #if umap and len(features) > 15 and len(np.unique(features, axis=0)) >= 2:
+        # if umap and len(features) > 15 and len(np.unique(features, axis=0)) >= 2:
         #    try:
         #        embedding = umap.UMAP(n_components=2, random_state=42).fit_transform(features)
         #    except Exception as e:
         #        print(f"UMAP failed ({e}), falling back to raw features.")
-        #elif not umap:
+        # elif not umap:
         #    print("UMAP not available, skipping dimensionality reduction.")
 
         labels = KMeans(n_clusters=self.n_clusters, random_state=42, n_init=10).fit_predict(embedding)

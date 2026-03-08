@@ -85,9 +85,7 @@ class PlayerTracker:
             t.predict()
 
         all_idx = list(range(len(self.tracks)))
-        matches, unmatched_tracks, unmatched_dets = self._match_dicts(
-            all_idx, measurements
-        )
+        matches, unmatched_tracks, unmatched_dets = self._match_dicts(all_idx, measurements)
 
         for ti, di in matches:
             self.tracks[ti].update(measurements[di])
@@ -119,9 +117,7 @@ class PlayerTracker:
             t.predict()
 
         all_idx = list(range(len(self.tracks)))
-        matches, unmatched_tracks, unmatched_players = self._match_players(
-            all_idx, candidates, embeddings
-        )
+        matches, unmatched_tracks, unmatched_players = self._match_players(all_idx, candidates, embeddings)
 
         for ti, pi in matches:
             track = self.tracks[ti]
@@ -143,12 +139,10 @@ class PlayerTracker:
         Unmatched detections then go through an IoU-only fallback stage.
         """
         active_indices = [
-            i for i in track_indices
+            i
+            for i in track_indices
             if self.tracks[i].time_since_update <= self.max_age
-            and (
-                self.max_track_length is None
-                or len(self.tracks[i].frame_ids) < self.max_track_length
-            )
+            and (self.max_track_length is None or len(self.tracks[i].frame_ids) < self.max_track_length)
         ]
 
         by_age: dict[int, list[int]] = defaultdict(list)
@@ -169,22 +163,21 @@ class PlayerTracker:
             sub_embs = [embeddings[j] for j in remaining_det]
 
             matches, um_t, um_d = self._match_subset(
-                age_indices, sub_players, sub_embs,
+                age_indices,
+                sub_players,
+                sub_embs,
             )
-            all_matches.extend(
-                (ti, remaining_det[di]) for ti, di in matches
-            )
+            all_matches.extend((ti, remaining_det[di]) for ti, di in matches)
             unmatched_tracks.extend(um_t)
             remaining_det = [remaining_det[j] for j in um_d]
 
         if unmatched_tracks and remaining_det:
             sub_players = [players[j] for j in remaining_det]
             iou_matches, um_t2, um_d2 = self._match_iou_only(
-                unmatched_tracks, sub_players,
+                unmatched_tracks,
+                sub_players,
             )
-            all_matches.extend(
-                (ti, remaining_det[di]) for ti, di in iou_matches
-            )
+            all_matches.extend((ti, remaining_det[di]) for ti, di in iou_matches)
             unmatched_tracks = um_t2
             remaining_det = [remaining_det[j] for j in um_d2]
 
@@ -199,11 +192,7 @@ class PlayerTracker:
 
         for i, t in enumerate(tracks):
             for j, p in enumerate(players):
-                iou_cost = (
-                    1.0 - bbox_iou(t.bbox, np.asarray(p.bbox, dtype=float))
-                    if p.bbox
-                    else 0.5
-                )
+                iou_cost = 1.0 - bbox_iou(t.bbox, np.asarray(p.bbox, dtype=float)) if p.bbox else 0.5
                 app_cost = gallery_distance(list(t.gallery), embeddings[j])
 
                 if p.bbox and len(np.asarray(p.bbox).ravel()) >= 4:
@@ -243,10 +232,7 @@ class PlayerTracker:
 
     def _match_dicts(self, track_indices, detections):
         """Match tracks to measurement dicts (benchmark path)."""
-        active_indices = [
-            i for i in track_indices
-            if self.tracks[i].time_since_update <= self.max_age
-        ]
+        active_indices = [i for i in track_indices if self.tracks[i].time_since_update <= self.max_age]
         tracks = [self.tracks[i] for i in active_indices]
         nt, nd = len(tracks), len(detections)
         INF = 1e5
@@ -367,17 +353,19 @@ class PlayerTracker:
             detections[frame_id] = list(unique_by_id.values())
 
     def _create_track(self, meas):
-        t = Track(self._next_id, meas, dt=self.dt,
-                  measurement_noise=self.measurement_noise, n_init=self.n_init)
+        t = Track(self._next_id, meas, dt=self.dt, measurement_noise=self.measurement_noise, n_init=self.n_init)
         self._next_id += 1
         self.tracks.append(t)
 
-    def _create_track_from_player(self, player, frame_id: int,
-                                  embedding: np.ndarray | None = None):
+    def _create_track_from_player(self, player, frame_id: int, embedding: np.ndarray | None = None):
         t = Track.from_player(
-            self._next_id, player, frame_id,
-            dt=self.dt, measurement_noise=self.measurement_noise,
-            n_init=self.n_init, embedding=embedding,
+            self._next_id,
+            player,
+            frame_id,
+            dt=self.dt,
+            measurement_noise=self.measurement_noise,
+            n_init=self.n_init,
+            embedding=embedding,
         )
         self._next_id += 1
         self.tracks.append(t)

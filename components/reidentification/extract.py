@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import torch
 
-#from .dataset import INPUT_SIZE, IMAGENET_MEAN, IMAGENET_STD
+# from .dataset import INPUT_SIZE, IMAGENET_MEAN, IMAGENET_STD
 from .model import ReIDModel
 
 INPUT_SIZE = (256, 128)

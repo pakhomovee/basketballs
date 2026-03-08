@@ -75,9 +75,7 @@ def evaluate_tracking(
     """
     gt_by_frame: dict[int, list] = {}
     for d in detections:
-        gt_by_frame.setdefault(d["frame_id"], []).append(
-            {"id": d["detection_id"], "pos": d["field_coords"]}
-        )
+        gt_by_frame.setdefault(d["frame_id"], []).append({"id": d["detection_id"], "pos": d["field_coords"]})
 
     tr_by_frame: dict[int, list] = {}
     for t in tracker.tracks:

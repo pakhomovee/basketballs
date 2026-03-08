@@ -9,17 +9,18 @@ Public API
 """
 
 from .model import ReIDModel
-#from .dataset import SynergyReIDDataset, QueryGalleryDataset
-#from .trainer import train
-#from .evaluate import evaluate
+
+# from .dataset import SynergyReIDDataset, QueryGalleryDataset
+# from .trainer import train
+# from .evaluate import evaluate
 from .extract import ReIDFeatureExtractor, extract_reid_embeddings
 
 __all__ = [
     "ReIDModel",
-#    "SynergyReIDDataset",
-#    "QueryGalleryDataset",
-#    "train",
-#    "evaluate",
+    #    "SynergyReIDDataset",
+    #    "QueryGalleryDataset",
+    #    "train",
+    #    "evaluate",
     "ReIDFeatureExtractor",
     "extract_reid_embeddings",
 ]

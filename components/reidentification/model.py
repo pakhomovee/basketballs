@@ -41,8 +41,8 @@ class ReIDModel(nn.Module):
         nn.init.normal_(self.classifier.weight, std=0.001)
 
     def forward(self, x: torch.Tensor):
-        feat_map = self.backbone(x)        # (B, 2048, H', W')
-        global_feat = self.gap(feat_map)   # (B, 2048, 1, 1)
+        feat_map = self.backbone(x)  # (B, 2048, H', W')
+        global_feat = self.gap(feat_map)  # (B, 2048, 1, 1)
         global_feat = global_feat.flatten(1)  # (B, 2048)
 
         bn_feat = self.bnneck(global_feat)
