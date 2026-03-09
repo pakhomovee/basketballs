@@ -33,6 +33,21 @@ def _extract_embeddings(video_path, detections, seg_model, reid_weights):
         print(f"ReID weights not found at {reid_weights}, tracker will use color histograms")
 
 
+def _get_video_frame_width(video_path: str) -> float | None:
+    """Return video frame width in pixels, or None if unavailable."""
+    try:
+        import cv2
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return None
+        width = float(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        cap.release()
+        return width if width > 0 else None
+    except Exception:
+        return None
+
+
 def main(
     video_path: str,
     gt_path: str | None = None,
@@ -118,7 +133,8 @@ def main(
         _extract_embeddings(video_path, detections, seg_model, "../models/reid_model.pth")
 
     if tracker_type == "flow":
-        tracker = FlowTracker(num_tracks=10)
+        frame_width = _get_video_frame_width(video_path)
+        tracker = FlowTracker(num_tracks=10, frame_width=frame_width)
         tracker.track(detections)
     else:
         tracker = PlayerTracker(max_track_length=max_track_length)
