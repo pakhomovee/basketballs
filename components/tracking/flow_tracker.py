@@ -7,6 +7,10 @@ a fixed number of tracks (default 10 for basketball).
 
 Combines DeepSORT-style costs (spatial, appearance, IoU) with a global
 optimization that eliminates the need for post-hoc track merging.
+
+    Supports multi-pass refinement: after the first pass produces initial
+    tracks, subsequent passes enrich link costs with past/future mean
+    tracklet embeddings from the previous solution, extending temporal consistency.
 """
 
 from __future__ import annotations
@@ -75,10 +79,18 @@ class FlowTracker:
         coordinates are unavailable. Scaled by sqrt(frame_gap).
     w_spatial, w_app, w_iou : float
         Weights for spatial, appearance, and IoU cost components.
+    w_extended : float
+        Weight for the extended appearance cost from mean tracklet embeddings.
+        Used in passes 2+ to penalise links whose tracklet neighbourhoods
+        look different. Set to 0 to effectively disable multi-pass enrichment.
+    oof_entry_cost : float
+        Additional cost to use transitions that come from out-of-frame
+        state (``start_out -> d_in`` and ``oof_i -> d_in_j``). Helps reduce
+        overuse of OOF routes when regular in-frame links are available.
     skip_penalty : float
         Per-skipped-frame additive penalty on link cost.
     detection_reward : float
-        Reward (negative cost) on each detection edge. Incentivizes the
+        Reward (negative cost) on each detection edge. Incentivises the
         solver to include as many detections as possible in tracks.
         A track through N detections gets N × detection_reward savings.
     enter_cost, exit_cost : float
@@ -95,6 +107,14 @@ class FlowTracker:
         Tracks can start only in the first k_warmup frames or from start_out (entering from edge).
     last_frames : int
         Tracks can end only in the last N frames or in end_out (exiting to edge).
+    n_passes : int
+        Number of MCMF passes.  Pass 1 uses standard costs; passes 2+
+        enrich link costs with mean tracklet embeddings computed from the
+        previous solution, extending temporal consistency.
+    lookback : int
+        Number of track positions to look back/forward when building the
+        past/future mean tracklet embeddings for each detection during
+        multi-pass refinement.
     """
 
     def __init__(
@@ -106,15 +126,19 @@ class FlowTracker:
         w_spatial: float = 0.2,
         w_app: float = 0.6,
         w_iou: float = 0.2,
-        skip_penalty: float = 0.6,
+        w_extended: float = 1.5,
+        skip_penalty: float = 1.0,
         detection_reward: float = 1.0,
         enter_cost: float = 2.0,
         exit_cost: float = 2.0,
         fps: float = 30.0,
-        frame_width: float = 1920,
+        frame_width: float | None = None,
         edge_margin: float = 5.0,
         k_warmup_frames: int = 10,
         last_frames: int = 10,
+        n_passes: int = 5,
+        lookback: int = 5,
+        oof_entry_cost: float = 0.5,
     ):
         self.num_tracks = num_tracks
         self.max_skip = max_skip
@@ -123,6 +147,7 @@ class FlowTracker:
         self.w_spatial = w_spatial
         self.w_app = w_app
         self.w_iou = w_iou
+        self.w_extended = w_extended
         self.skip_penalty = skip_penalty
         self.detection_reward = detection_reward
         self.enter_cost = enter_cost
@@ -132,9 +157,16 @@ class FlowTracker:
         self.edge_margin = edge_margin
         self.k_warmup_frames = k_warmup_frames
         self.last_frames = last_frames
+        self.n_passes = n_passes
+        self.lookback = lookback
+        self.oof_entry_cost = oof_entry_cost
 
     def track(self, detections: dict) -> None:
         """Assign track IDs to all players using min-cost flow.
+
+        Runs ``n_passes`` iterations.  After the first pass, each subsequent
+        pass enriches link costs with mean tracklet embeddings computed from
+        the previous solution, improving long-range temporal consistency.
 
         Modifies ``player.player_id`` in-place. Unassigned detections
         keep ``player_id = -1``.
@@ -156,14 +188,160 @@ class FlowTracker:
         if n_det == 0:
             return
         frame_width = self.frame_width
+        if frame_width is None:
+            inferred_width = 0.0
+            for _, player in det_list:
+                bbox = player.bbox
+                if bbox is not None and len(bbox) >= 3:
+                    inferred_width = max(inferred_width, float(bbox[2]))
+            frame_width = inferred_width
         sorted_frames = sorted(frame_to_dets.keys())
 
-        # Tracks can start only in first k_warmup frames or from start_out; end in last N or end_out
         first_frames = set(sorted_frames[: self.k_warmup_frames])
         last_frames_set = set(sorted_frames[-self.last_frames :]) if sorted_frames else set()
 
-        # Nodes: S=0, T=1, d_i_in/d_out, oof_i, start_out, end_out
-        # Total nodes = 2 + 2*n_det + n_det + 2 = 3*n_det + 4
+        tracks: list[list[int]] | None = None
+        lookback = self.lookback
+        for pass_idx in range(self.n_passes):
+            past_embs: dict[int, np.ndarray] | None = None
+            future_embs: dict[int, np.ndarray] | None = None
+            if tracks is not None:
+                past_embs, future_embs = self._compute_tracklet_embeddings(
+                    tracks,
+                    det_list,
+                    lookback,
+                )
+                lookback *= 2
+
+            tracks = self._solve_pass(
+                det_list,
+                frame_to_dets,
+                sorted_frames,
+                first_frames,
+                last_frames_set,
+                frame_width,
+                n_det,
+                past_embs,
+                future_embs,
+                pass_idx,
+            )
+
+        assert tracks is not None
+        for track_id, path in enumerate(tracks, start=1):
+            for det_idx in path:
+                det_list[det_idx][1].player_id = track_id
+
+        logger.info(
+            "Assigned %d tracks covering %d / %d detections",
+            len(tracks),
+            sum(len(p) for p in tracks),
+            n_det,
+        )
+
+    # ------------------------------------------------------------------
+    # Multi-pass refinement helpers
+    # ------------------------------------------------------------------
+
+    def _compute_tracklet_embeddings(
+        self,
+        tracks: list[list[int]],
+        det_list: list[tuple[int, object]],
+        lookback: int,
+    ) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
+        """Directional mean embeddings for each tracked detection.
+
+        Parameters
+        ----------
+        lookback : int
+            Window size (in track positions) for the past / future
+            averaging.  Doubled after every refinement pass by the caller.
+
+        Returns
+        -------
+        tuple[dict[int, np.ndarray], dict[int, np.ndarray]]
+            ``(past_embs, future_embs)`` where:
+            - ``past_embs[det_idx]`` is the mean embedding over the lookback
+              positions ending at (and including) the detection in its track.
+            - ``future_embs[det_idx]`` is the mean embedding over the lookback
+              positions starting at (and including) the detection in its track.
+
+        Only detections that belong to a track from the previous pass receive
+        entries.  Untracked detections are left out so ``_extended_cost``
+        falls back gracefully (returns None) for them.
+        """
+        past_embs: dict[int, np.ndarray] = {}
+        future_embs: dict[int, np.ndarray] = {}
+
+        for track in tracks:
+            for pos, det_idx in enumerate(track):
+                # Past: positions [max(0, pos - lookback) .. pos] inclusive
+                past_start = max(0, pos - lookback)
+                past_vecs: list[np.ndarray] = []
+                for s_idx in track[past_start : pos + 1]:
+                    player = det_list[s_idx][1]
+                    emb = player.reid_embedding if player.reid_embedding is not None else player.embedding
+                    if emb is not None:
+                        past_vecs.append(emb)
+                if past_vecs:
+                    past_embs[det_idx] = np.mean(past_vecs, axis=0)
+
+                # Future: positions [pos .. min(len(track)-1, pos + lookback)] inclusive
+                future_end = min(len(track), pos + lookback + 1)
+                future_vecs: list[np.ndarray] = []
+                for s_idx in track[pos:future_end]:
+                    player = det_list[s_idx][1]
+                    emb = player.reid_embedding if player.reid_embedding is not None else player.embedding
+                    if emb is not None:
+                        future_vecs.append(emb)
+                if future_vecs:
+                    future_embs[det_idx] = np.mean(future_vecs, axis=0)
+
+        return past_embs, future_embs
+
+    def _extended_cost(
+        self,
+        i: int,
+        j: int,
+        past_embs: dict[int, np.ndarray],
+        future_embs: dict[int, np.ndarray],
+    ) -> float | None:
+        """Squared cosine distance between the *past* mean embedding of
+        source ``i`` and the *future* mean embedding of target ``j``.
+
+        Squaring makes the penalty super-linear: same-person links (low
+        cosine dist ~0.2 → 0.04) are barely affected, while cross-identity
+        links (high cosine dist ~0.7 → 0.49) are hit much harder.  This
+        closes the gap with ``enter_cost`` and prevents the solver from
+        preferring cheap ID swaps over creating new tracks.
+
+        Returns None when either embedding is unavailable.
+        """
+        emb_i = past_embs.get(i)
+        emb_j = future_embs.get(j)
+        if emb_i is None or emb_j is None:
+            return None
+        d = cosine_dist(emb_i, emb_j)
+        return d * d
+
+    # ------------------------------------------------------------------
+    # Single MCMF pass (graph build + solve + extract)
+    # ------------------------------------------------------------------
+
+    def _solve_pass(
+        self,
+        det_list: list[tuple[int, object]],
+        frame_to_dets: dict[int, list[int]],
+        sorted_frames: list[int],
+        first_frames: set[int],
+        last_frames_set: set[int],
+        frame_width: float,
+        n_det: int,
+        past_embs: dict[int, np.ndarray] | None,
+        future_embs: dict[int, np.ndarray] | None,
+        pass_idx: int,
+    ) -> list[list[int]]:
+        """Build the flow graph, solve MCMF, and return extracted tracks."""
+
         n_nodes = 2 + 3 * n_det + 2
         mcf = MinCostFlow(n_nodes)
 
@@ -178,7 +356,7 @@ class FlowTracker:
             d_in = _det_in(i, n_det)
             d_out = _det_out(i, n_det)
 
-            mcf.add_edge(d_in, d_out, 1, -self.detection_reward)  # reward for including detection
+            mcf.add_edge(d_in, d_out, 1, -self.detection_reward)
 
             # Entry conditions
             if frame_id in first_frames:
@@ -188,23 +366,19 @@ class FlowTracker:
                 or self._near_edge(det_list[i][1], frame_width, self.edge_margin, "right")
             )
             if near_edge:
-                mcf.add_edge(start_out, d_in, 1, self.enter_cost)
+                mcf.add_edge(start_out, d_in, 1, self.enter_cost + self.oof_entry_cost)
 
             # Exit conditions
             if frame_id in last_frames_set:
                 mcf.add_edge(d_out, T, 1, self.exit_cost)
-            # end_out for all: track can end anywhere (player left frame); near-edge uses free exit
             mcf.add_edge(d_out, end_out, 1, 0.0 if near_edge else self.exit_cost)
 
             # OOF Node: d_out_i -> oof_i
-            # This edge costs nothing (or small penalty?) and allows "storing" the track
             oof_node = _oof_node(i, n_det)
             mcf.add_edge(d_out, oof_node, 1, 0.0)
 
-            # Tracks can also end directly from OOF if they never return (costly exit)
             mcf.add_edge(oof_node, T, 1, self.exit_cost)
             if near_edge:
-                # If last seen near edge, can exit from OOF cheaply
                 mcf.add_edge(oof_node, end_out, 1, 0.0)
             else:
                 mcf.add_edge(oof_node, end_out, 1, self.exit_cost)
@@ -212,13 +386,14 @@ class FlowTracker:
         n_links = 0
         n_oof_links = 0
 
-        for fi_idx in tqdm(range(len(sorted_frames)), desc="Building flow graph"):
+        pass_label = f"Pass {pass_idx + 1}/{self.n_passes}: building flow graph"
+        for fi_idx in tqdm(range(len(sorted_frames)), desc=pass_label):
             frame_i = sorted_frames[fi_idx]
             for fj_idx in range(fi_idx + 1, len(sorted_frames)):
                 frame_j = sorted_frames[fj_idx]
                 gap = frame_j - frame_i
 
-                # -- Standard Links (short term) --
+                # -- Standard links (short term) --
                 if gap <= self.max_skip:
                     for i in frame_to_dets[frame_i]:
                         player_i = det_list[i][1]
@@ -226,19 +401,20 @@ class FlowTracker:
                             player_j = det_list[j][1]
                             cost = self._link_cost(player_i, player_j, gap)
                             if cost is not None:
+                                if past_embs is not None and future_embs is not None:
+                                    ext = self._extended_cost(i, j, past_embs, future_embs)
+                                    if ext is not None:
+                                        cost += self.w_extended * ext
                                 mcf.add_edge(_det_out(i, n_det), _det_in(j, n_det), 1, cost)
                                 n_links += 1
 
-                # -- Out-of-Frame (OOF) Links via OOF Nodes --
-                # oof_i -> d_in_j
-                # This means detection i went OOF, stayed OOF, and now reappears as j
+                # -- Out-of-frame (OOF) links via OOF nodes --
                 if frame_width > 0:
                     margin_exit = self.edge_margin
-                    margin_entry = self.edge_margin  # fixed; gap can be large for OOF
+                    margin_entry = self.edge_margin
 
                     for i in frame_to_dets[frame_i]:
                         player_i = det_list[i][1]
-                        # Must be near edge to enter OOF state (logically)
                         is_left_exit = self._near_edge(player_i, frame_width, margin_exit, "left")
                         is_right_exit = self._near_edge(player_i, frame_width, margin_exit, "right")
 
@@ -253,45 +429,31 @@ class FlowTracker:
                             is_left_entry = self._near_edge(player_j, frame_width, margin_entry, "left")
                             is_right_entry = self._near_edge(player_j, frame_width, margin_entry, "right")
 
-                            # Re-entry condition
-                            if is_left_exit and is_left_entry:
+                            if (is_left_exit and is_left_entry) or (is_right_exit and is_right_entry):
                                 cost = self._link_cost_oof(player_i, player_j, gap)
                                 if cost is not None:
-                                    mcf.add_edge(oof_node_i, _det_in(j, n_det), 1, cost)
-                                    n_oof_links += 1
-
-                            elif is_right_exit and is_right_entry:
-                                cost = self._link_cost_oof(player_i, player_j, gap)
-                                if cost is not None:
+                                    cost += self.oof_entry_cost
+                                    if past_embs is not None and future_embs is not None:
+                                        ext = self._extended_cost(i, j, past_embs, future_embs)
+                                        if ext is not None:
+                                            cost += self.w_extended * ext
                                     mcf.add_edge(oof_node_i, _det_in(j, n_det), 1, cost)
                                     n_oof_links += 1
 
         logger.info(
-            "Flow graph: %d detections, %d link edges, %d oof edges, %d nodes",
+            "Pass %d: %d detections, %d link edges, %d oof edges, %d nodes",
+            pass_idx + 1,
             n_det,
             n_links,
             n_oof_links,
             n_nodes,
         )
 
-        # --- Solve ---
-        logger.info("Solving MCMF for %d tracks …", self.num_tracks)
+        logger.info("Pass %d: solving MCMF for %d tracks …", pass_idx + 1, self.num_tracks)
         flow, total_cost = mcf.solve(S, T, self.num_tracks)
-        logger.info("MCMF done: flow=%d, cost=%.2f", flow, total_cost)
+        logger.info("Pass %d: flow=%d, cost=%.2f", pass_idx + 1, flow, total_cost)
 
-        # --- Extract tracks and assign IDs ---
-        tracks = self._extract_tracks(mcf, n_det)
-        for track_id, path in enumerate(tracks, start=1):
-            for det_idx in path:
-                # Use dictionary assignment
-                det_list[det_idx][1].player_id = track_id
-
-        logger.info(
-            "Assigned %d tracks covering %d / %d detections",
-            len(tracks),
-            sum(len(p) for p in tracks),
-            n_det,
-        )
+        return self._extract_tracks(mcf, n_det)
 
     # ------------------------------------------------------------------
     # Out-of-frame helpers
