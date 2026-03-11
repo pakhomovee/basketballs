@@ -7,7 +7,7 @@ from court_detector.court_detector import CourtDetector
 from team_clustering.embedding import extract_player_embeddings
 from team_clustering.mock_detector import MockDetector
 from team_clustering.team_clustering import TeamClustering
-from tracking import PlayerTracker, FlowTracker
+from tracking import FlowTracker
 from visualization import write_2d_court_video, make_side_by_side_video
 from smoother import smooth_detection_coordinates
 from reidentification import extract_reid_embeddings
@@ -57,11 +57,9 @@ def main(
     k_frames: int = 30,
     output_both: str | None = None,
     enable_smoothing: bool = True,
-    max_track_length: int | None = 60,
     no_cache: bool = False,
     no_cache_detector: bool = False,
     no_cache_embeds: bool = False,
-    tracker_type: str = "flow",
 ):
     """
     Full pipeline: detect, court detect, team cluster, generate 2D video.
@@ -73,8 +71,6 @@ def main(
         output_2d_path: Path for output 2D court video. Default: <video_stem>_2d.mp4
         league: Court type (NBA or FIBA) for flattener.
         k_frames: Sample every k-th frame for team clustering.
-        max_track_length: Cap track length in frames (~2 sec at 30fps) for dense crowds.
-                         None = no limit.
     """
     get_logger().clear()
     if not os.path.exists("../models/court_detection_model.pt"):
@@ -132,31 +128,12 @@ def main(
         court_detector.run(video_path, detections)
         _extract_embeddings(video_path, detections, seg_model, "../models/reid_model.pth")
 
-    if tracker_type == "flow":
-        frame_width = _get_video_frame_width(video_path)
-        tracker = FlowTracker(num_tracks=10, frame_width=frame_width)
-        tracker.track(detections)
-    else:
-        tracker = PlayerTracker(max_track_length=max_track_length)
-        tracker.track(detections)
+    frame_width = _get_video_frame_width(video_path)
+    tracker = FlowTracker(num_tracks=10, frame_width=frame_width)
+    tracker.track(detections)
 
     team_clustering = TeamClustering()
     team_clustering.run(detections, k_frames=k_frames)
-
-    if tracker_type != "flow":
-        for threshold in [0.001, 0.005, 0.01, 0.03, 0.07, 0.1, 0.2, 0.3, 0.5, 0.7, 0.8, 0.85, 0.9]:
-            track_id_to_team = {
-                p.player_id: p.team_id
-                for players in detections.values()
-                for p in players
-                if p.player_id >= 0 and p.team_id is not None
-            }
-            tracker.merge_tracks(
-                max_tracks=10, detections=detections, track_id_to_team=track_id_to_team, cost_threshold=threshold
-            )
-            team_clustering.run(detections, k_frames=k_frames)
-            if len(tracker.tracks) <= 10:
-                break
 
     if enable_smoothing:
         smooth_detection_coordinates(detections)
@@ -183,18 +160,11 @@ if __name__ == "__main__":
     parser.add_argument("--output_both", default=None, help="Output side by side 2D video path")
     parser.add_argument("--court_type", choices=["nba", "fiba"], default="nba")
     parser.add_argument("--k-frames", type=int, default=30, help="Sample every k frames for clustering")
-    parser.add_argument("--max-track-length", type=int, default=60, help="Max track length. 0 = no limit")
     parser.add_argument("--no_smoothing", type=bool, default=False, help="Disable smoothing")
     parser.add_argument("--no-cache", action="store_true", help="Disable all caching (don't load, don't save)")
     parser.add_argument("--no-cache-detector", action="store_true", help="Don't use cache for detector output")
     parser.add_argument("--no-cache-embeds", action="store_true", help="Don't use cache for embeddings")
     parser.add_argument("--no-reid", action="store_true", help="Force color-histogram embeddings (skip ReID)")
-    parser.add_argument(
-        "--tracker",
-        choices=["online", "flow"],
-        default="flow",
-        help="Tracker type: 'online' (Kalman+Hungarian) or 'flow' (min-cost-max-flow)",
-    )
     args = parser.parse_args()
 
     court_type = CourtType.NBA if args.court_type == "nba" else CourtType.FIBA
@@ -207,9 +177,7 @@ if __name__ == "__main__":
         k_frames=args.k_frames,
         output_both=args.output_both,
         enable_smoothing=not args.no_smoothing,
-        max_track_length=args.max_track_length or None,
         no_cache=args.no_cache,
         no_cache_detector=args.no_cache_detector,
         no_cache_embeds=args.no_cache_embeds,
-        tracker_type=args.tracker,
     )
