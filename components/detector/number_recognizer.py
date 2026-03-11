@@ -6,6 +6,7 @@ For each bbox the region is cropped, preprocessed and passed to OCR (EasyOCR).
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import List
 
 import cv2
@@ -20,6 +21,8 @@ except ImportError:
 
 # Lazy init of Reader (heavy model load on first use)
 _reader: "easyocr.Reader | None" = None
+# Counter for saved crops when frame_id is not provided
+_save_crop_counter = 0
 
 
 def _get_reader() -> "easyocr.Reader | None":
@@ -32,18 +35,14 @@ def _get_reader() -> "easyocr.Reader | None":
 
 
 def _preprocess_crop(crop: np.ndarray) -> np.ndarray:
-    """Grayscale, contrast, threshold — for better digit recognition."""
+    """
+    Light preprocessing: keep color (BGR), optional light denoise.
+    """
     if crop.size == 0:
         return crop
-    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop
-    h, w = gray.shape[:2]
-    min_side = 20
-    if w < min_side or h < min_side:
-        scale = max(min_side / w, min_side / h, 1.5)
-        gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-    if gray.size > 0:
-        gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-    return gray
+    img = crop.copy() if len(crop.shape) == 3 else cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+    img = cv2.bilateralFilter(img, d=5, sigmaColor=30, sigmaSpace=30)
+    return img
 
 
 def _parse_digit(text: str) -> int | None:
@@ -65,8 +64,10 @@ def recognize_numbers_in_frame(
     frame: np.ndarray,
     number_detections: List[Number],
     *,
-    padding: int = 30,
+    padding: int = 5,
     ocr_conf_threshold: float = 0.99,
+    save_crops_dir: str | Path | None = None,
+    frame_id: int | None = None,
 ) -> List[Number]:
     """
     Recognize digit/number in each bbox region from frame and list of number detections.
@@ -75,20 +76,27 @@ def recognize_numbers_in_frame(
     Args:
         frame: BGR frame (OpenCV).
         number_detections: list of detections with bbox [x1, y1, x2, y2].
-        padding: pixels to expand bbox when cropping.
+        padding: pixels to expand bbox when cropping (typically 2–5).
         ocr_conf_threshold: minimum EasyOCR confidence (0.0–1.0). Below this, num is not set.
+        save_crops_dir: if set, save each preprocessed crop sent to the model to this directory.
+        frame_id: optional frame index, used in saved filenames when save_crops_dir is set.
 
     Returns:
         The same list `number_detections` with `num` filled (int 0–99 or None).
     """
+    global _save_crop_counter
     reader = _get_reader()
     if reader is None:
         for n in number_detections:
             n.num = None
         return number_detections
 
+    if save_crops_dir is not None:
+        save_path = Path(save_crops_dir)
+        save_path.mkdir(parents=True, exist_ok=True)
+
     h, w = frame.shape[:2]
-    for number in number_detections:
+    for i, number in enumerate(number_detections):
         x1, y1, x2, y2 = number.bbox[0], number.bbox[1], number.bbox[2], number.bbox[3]
         x1 = max(0, x1 - padding)
         y1 = max(0, y1 - padding)
@@ -111,4 +119,14 @@ def recognize_numbers_in_frame(
             number.num = best_num if best_conf >= ocr_conf_threshold else None
         except Exception:
             number.num = None
+        if save_crops_dir is not None:
+            if frame_id is not None:
+                base = f"frame_{frame_id:06d}_crop_{i:02d}"
+            else:
+                base = f"call_{_save_crop_counter:06d}_crop_{i:02d}"
+            num_suffix = f"_num_{number.num}" if number.num is not None else "_num_None"
+            cv2.imwrite(str(save_path / f"{base}{num_suffix}.png"), preprocessed)
+            cv2.imwrite(str(save_path / f"{base}{num_suffix}_raw.png"), crop)
+    if save_crops_dir is not None and frame_id is None:
+        _save_crop_counter += 1
     return number_detections
