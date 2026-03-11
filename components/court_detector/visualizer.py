@@ -11,7 +11,12 @@ import numpy as np
 from ultralytics import YOLO
 
 from common.classes import CourtType
-from court_detector.court_constants import SMALL_COURT_POINTS, FIBA_COURT_POINTS, MAPPING_ROBOFLOW_COURT_DETECTION, CourtConstants
+from court_detector.court_constants import (
+    SMALL_COURT_POINTS,
+    FIBA_COURT_POINTS,
+    MAPPING_ROBOFLOW_COURT_DETECTION,
+    CourtConstants,
+)
 from court_detector.court_detector import CourtDetector, project_homography
 from court_detector.prepare_dataset import SPORCENTER_GOOD_SEQS
 import json
@@ -452,9 +457,14 @@ def run_video(args):
     court_constants = CourtConstants(CourtType.NBA)
 
     # Pre-compute homographies, keypoint detections and per-frame losses
+    # homographies, frames_sizes, keypoints_detections, losses = detector.extract_homographies_from_video(
+    #     str(args.video), court_constants
+    # )
+
     homographies, frames_sizes, keypoints_detections, losses = detector.extract_homographies_from_video(
         str(args.video), court_constants
     )
+    # losses = None
 
     # Open video again for visualization
     cap = cv2.VideoCapture(str(args.video))
@@ -507,9 +517,9 @@ def run_video(args):
             court_corners_norm = np.array(
                 [
                     [-0.5, -0.5],  # left-bottom
-                    [0.5, -0.5],   # right-bottom
-                    [0.5, 0.5],    # right-top
-                    [-0.5, 0.5],   # left-top
+                    [0.5, -0.5],  # right-bottom
+                    [0.5, 0.5],  # right-top
+                    [-0.5, 0.5],  # left-top
                 ],
                 dtype=np.float32,
             )

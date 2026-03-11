@@ -194,4 +194,3 @@ class CourtConstants:
         self.cls_to_points = defaultdict(list)
         for x, y, c in self.court_points:
             self.cls_to_points[c].append((x, y))
-        
