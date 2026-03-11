@@ -177,7 +177,7 @@ def recognize_numbers_in_frame(
         The same list `number_detections` with `num` filled (int 0–99 or None).
     """
     global _model, _transform, _save_crop_counter
-    model = _get_model(checkpoint_path)
+    _get_model(checkpoint_path)
 
     if save_crops_dir is not None:
         save_path = Path(save_crops_dir)
