@@ -1,13 +1,15 @@
 """
-Prepare a unified detection dataset from multiple sources:
+Prepare a unified keypoint-detection dataset from multiple sources:
 - sportcenter_camerapose_dataset
 - deepsportradar_instants_dataset
 - roboflow_court_detection (COCO keypoints in YOLO txt format)
 
-Output: one YOLO detection dataset under components/court_detector/yolo_combined_data
-with images/train|val and labels/train|val. Each label file ends with an extra line
-containing the dataset name (sportcenter, deepsportradar, roboflow-court-detection)
-for downstream sampling.
+Output: one YOLO pose dataset under components/court_detector/yolo_combined_data
+with images/train|val and labels/train|val.
+
+Each label file has one line per court instance:
+  0 0.5 0.5 1.0 1.0 <kp0_x> <kp0_y> <kp0_vis> ... <kpN_x> <kpN_y> <kpN_vis>
+followed by a final line with the dataset tag for balanced sampling.
 """
 
 import json
@@ -22,13 +24,16 @@ from tqdm import tqdm
 from court_detector.court_constants import (
     SMALL_COURT_POINTS,
     FIBA_COURT_POINTS,
-    MAPPING_ROBOFLOW_COURT_DETECTION,
     NBA_COURT_POINTS,
+    MAPPING_ROBOFLOW_COURT_DETECTION,
+    SYMMETRIC_MAPPING,
 )
 
 JPEG_QUALITY = 50
 SPORTCENTER_FRACTION = 0.2
-BOX_SZ = 0.02  # fraction of the longer image side
+BOX_SZ = 0.02  # fraction of the longer image side – used to decide visibility margin
+
+NUM_KEYPOINTS = int(max(p[2] for p in NBA_COURT_POINTS)) + 1
 
 SPORCENTER_GOOD_SEQS = [
     9841,
@@ -86,6 +91,12 @@ def save_jpeg(dst_path: Path, img: np.ndarray):
         raise RuntimeError(f"Failed to write image: {dst_path}")
 
 
+def _format_keypoint_label(kpts: np.ndarray) -> str:
+    """Build a single YOLO-pose label line: cls cx cy w h  kp0_x kp0_y kp0_v ... """
+    flat_kpts = " ".join(f"{x:.6f} {y:.6f} {v:.6f}" for x, y, v in kpts)
+    return f"0 0.500000 0.500000 1.000000 1.000000 {flat_kpts}"
+
+
 def convert_sportcenter(out_dirs, val_split=0.15):
     dataset_root = Path(__file__).parent / "dataset" / "sportcenter_camerapose_dataset"
     seqs = [dataset_root / f"seq_{seq_id}" for seq_id in SPORCENTER_GOOD_SEQS]
@@ -93,7 +104,6 @@ def convert_sportcenter(out_dirs, val_split=0.15):
         return
     val_count = max(1, int(len(seqs) * val_split))
     val_seqs = set(s.name for s in seqs[:val_count])
-    # train_seqs = set(s.name for s in seqs[val_count:])
 
     samples = []
     for seq in seqs:
@@ -123,17 +133,19 @@ def convert_sportcenter(out_dirs, val_split=0.15):
         pts_img = project_homography(pts_world, Hr)
 
         box_px = max(h, w) * BOX_SZ
-        half_w = box_px / w / 2.0
-        half_h = box_px / h / 2.0
-        labels = []
+        kpts = np.zeros((NUM_KEYPOINTS, 3), dtype=np.float32)
+        visible_cnt = 0
         for (u, v), t in zip(pts_img, types):
             if box_px <= u < w - box_px and box_px <= v < h - box_px:
-                nx, ny = u / w, v / h
-                labels.append(f"{t} {nx:.6f} {ny:.6f} {2 * half_w:.6f} {2 * half_h:.6f}")
+                kpts[t, 0] = u / w
+                kpts[t, 1] = v / h
+                kpts[t, 2] = 2.0  # visible
+                visible_cnt += 1
 
-        if not labels:
+        if visible_cnt == 0:
             continue
 
+        labels = [_format_keypoint_label(kpts)]
         base = f"sport_{img_path.stem}"
         dst_img = out_dirs[f"img_{split}"] / f"{base}.jpg"
         dst_lbl = out_dirs[f"lbl_{split}"] / f"{base}.txt"
@@ -182,16 +194,18 @@ def convert_deepsportradar(out_dirs):
         pts_img = project_points(K, R, T, pts)
 
         box_px = max(h, w) * BOX_SZ
-        half_w = box_px / w / 2.0
-        half_h = box_px / h / 2.0
-        labels = []
+        kpts = np.zeros((NUM_KEYPOINTS, 3), dtype=np.float32)
+        visible_cnt = 0
         for (u, v), t in zip(pts_img, types):
             if box_px <= u < w - box_px and box_px <= v < h - box_px:
-                nx, ny = u / w, v / h
-                labels.append(f"{t} {nx:.6f} {ny:.6f} {2 * half_w:.6f} {2 * half_h:.6f}")
-        if not labels:
+                kpts[t, 0] = u / w
+                kpts[t, 1] = v / h
+                kpts[t, 2] = 2.0
+                visible_cnt += 1
+        if visible_cnt == 0:
             continue
 
+        labels = [_format_keypoint_label(kpts)]
         base = f"deep_{png_path.stem}"
         dst_img = out_dirs[f"img_{split}"] / f"{base}.jpg"
         dst_lbl = out_dirs[f"lbl_{split}"] / f"{base}.txt"
@@ -222,22 +236,24 @@ def convert_roboflow(out_dirs):
             if len(vals) < 5:
                 continue
             kpt_num = (len(vals) - 5) // 3
-            # cls = int(vals[0])
-            kpts = np.array(vals[5 : 5 + kpt_num * 3], dtype=float).reshape(kpt_num, 3)
+            raw_kpts = np.array(vals[5 : 5 + kpt_num * 3], dtype=float).reshape(kpt_num, 3)
 
-            labels = []
-            box_px = max(h, w) * BOX_SZ
-            half_w = box_px / w / 2.0
-            half_h = box_px / h / 2.0
-            for idx, (nx, ny, vis) in enumerate(kpts):
+            out_kpts = np.zeros((NUM_KEYPOINTS, 3), dtype=np.float32)
+            visible_cnt = 0
+            for idx, (nx, ny, vis) in enumerate(raw_kpts):
                 if vis <= 0:
                     continue
                 if idx not in MAPPING_ROBOFLOW_COURT_DETECTION:
                     continue
                 t = MAPPING_ROBOFLOW_COURT_DETECTION[idx]
-                labels.append(f"{t} {nx:.6f} {ny:.6f} {2 * half_w:.6f} {2 * half_h:.6f}")
-            if not labels:
+                out_kpts[t, 0] = nx
+                out_kpts[t, 1] = ny
+                out_kpts[t, 2] = vis
+                visible_cnt += 1
+            if visible_cnt == 0:
                 continue
+
+            labels = [_format_keypoint_label(out_kpts)]
             base = f"rf_{img_path.stem}"
             dst_img = out_dirs[f"img_{split_out}"] / f"{base}.jpg"
             dst_lbl = out_dirs[f"lbl_{split_out}"] / f"{base}.txt"
@@ -247,8 +263,8 @@ def convert_roboflow(out_dirs):
 
 
 def build_data_yaml(out_root: Path):
-    num_classes = int(max(p[2] for p in NBA_COURT_POINTS)) + 1
-    class_names = [f"type_{i}" for i in range(num_classes)]
+    num_keypoints = NUM_KEYPOINTS
+    flip_idx = [SYMMETRIC_MAPPING[i] for i in range(num_keypoints)]
     data_yaml = out_root / "data.yaml"
     data_yaml.write_text(
         "\n".join(
@@ -256,7 +272,9 @@ def build_data_yaml(out_root: Path):
                 f"path: {out_root}",
                 "train: images/train",
                 "val: images/val",
-                f"names: {class_names}",
+                "names: ['court']",
+                f"kpt_shape: [{num_keypoints}, 3]",
+                f"flip_idx: {flip_idx}",
             ]
         )
     )

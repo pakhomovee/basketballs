@@ -100,7 +100,7 @@ def main(
             all_detections = detector.detect_video(video_path)
             detections = get_video_players_detections(all_detections)
             court_detector = CourtDetector()
-            court_detector.run(video_path, detections)
+            court_detector.run(video_path, detections, court_type)
             _extract_embeddings(video_path, detections, seg_model, "../models/reid_model.pth")
             if save_cache:
                 save_detections_cache(
@@ -184,7 +184,7 @@ if __name__ == "__main__":
     parser.add_argument("--court_type", choices=["nba", "fiba"], default="nba")
     parser.add_argument("--k-frames", type=int, default=30, help="Sample every k frames for clustering")
     parser.add_argument("--max-track-length", type=int, default=60, help="Max track length. 0 = no limit")
-    parser.add_argument("--no_smoothing", type=bool, default=False, help="Disable smoothing")
+    parser.add_argument("--no_smoothing", action='store_true', help="Disable smoothing")
     parser.add_argument("--no-cache", action="store_true", help="Disable all caching (don't load, don't save)")
     parser.add_argument("--no-cache-detector", action="store_true", help="Don't use cache for detector output")
     parser.add_argument("--no-cache-embeds", action="store_true", help="Don't use cache for embeddings")
