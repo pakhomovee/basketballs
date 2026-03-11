@@ -195,3 +195,23 @@ class TeamClustering:
                 if emb is not None:
                     tracks[player.player_id].append(emb)
         return dict(tracks)
+
+    def cluster_per_frame(self, players: list) -> dict[int, int]:
+        """
+        Cluster players in a single frame into teams. Each detection is a singleton track.
+
+        Args:
+            players: List of Player objects with embedding set.
+
+        Returns:
+            dict[player_index, team_label] for players with valid embeddings.
+            Empty if fewer than n_clusters players have embeddings.
+        """
+        track_embeddings: dict[int, list[np.ndarray]] = {}
+        for i, player in enumerate(players):
+            emb = getattr(player, "embedding", None)
+            if emb is not None:
+                track_embeddings[i] = [emb]
+
+        clusters = _cluster_track_embeddings(track_embeddings, self.n_clusters)
+        return clusters

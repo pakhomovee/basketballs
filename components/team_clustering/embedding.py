@@ -68,6 +68,52 @@ def _process_batch(embedder: PlayerEmbedder, crops: list, players: list) -> None
         player.embedding = embedder.extract_embedding(crop, mask).astype(np.float32)
 
 
+def extract_embeddings_from_image(
+    frame: "np.ndarray",
+    players: list,
+    embedder: PlayerEmbedder | None = None,
+    seg_model: str = "yolov8n-seg.pt",
+    batch_size: int = 32,
+) -> None:
+    """
+    Extract embeddings for players in a single image. Sets player.embedding in place.
+
+    Args:
+        frame: BGR image (H, W, 3).
+        players: List of Player objects with bbox set.
+        embedder: Optional pre-instantiated PlayerEmbedder. If None, creates one.
+        seg_model: YOLO seg model name (used only if embedder is None).
+        batch_size: Batch size for segmentation.
+    """
+    from common.utils.utils import get_device
+
+    if embedder is None:
+        embedder = PlayerEmbedder(seg_model, get_device())
+
+    h, w = frame.shape[:2]
+    batch_crops, batch_players = [], []
+
+    for player in players:
+        if not player.bbox or len(player.bbox) < 4:
+            continue
+        x1, y1, x2, y2 = map(int, player.bbox)
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(w, x2), min(h, y2)
+        if x2 - x1 < 5 or y2 - y1 < 5:
+            continue
+
+        crop = frame[y1:y2, x1:x2]
+        batch_crops.append(crop)
+        batch_players.append(player)
+
+        if len(batch_crops) >= batch_size:
+            _process_batch(embedder, batch_crops, batch_players)
+            batch_crops, batch_players = [], []
+
+    if batch_crops:
+        _process_batch(embedder, batch_crops, batch_players)
+
+
 class PlayerEmbedder:
     """Extracts player masks (via YOLO segmentation) and color-histogram embeddings."""
 
