@@ -1,27 +1,24 @@
 import json
 import shutil
 from pathlib import Path
+from copy import deepcopy
 
 import cv2
 import numpy as np
 import torch
 from ultralytics import YOLO
 
-from court_detector.court_constants import (
-    SMALL_COURT_POINTS,
-    FIBA_COURT_POINTS,
-    NBA_COURT_POINTS,
-    COURT_TYPE_TO_COURT_POINTS,
-)
+from court_detector.court_constants import CourtConstants
 from court_detector.trainer import CourtDetectionTrainer
 from court_detector.prepare_dataset import prepare_dataset
 from common.classes.player import PlayersDetections
 from common.logger import get_logger
 
-from typing import Optional
+from typing import Any, Optional
 from collections import defaultdict
 
 from common.classes import CourtType
+import torch
 
 
 def project_homography(points_xy, H):
@@ -104,97 +101,128 @@ class CourtDetector:
     def predict_court_homography(
         self,
         frame_rgb: np.ndarray,
-        court_type: CourtType = CourtType.NBA,
+        court_constants: CourtConstants,
     ) -> (np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]):
         """
         Estimates homography from frame to court.
         """
-        court_points = COURT_TYPE_TO_COURT_POINTS[court_type]
+        court_points = court_constants.court_points
+        frame_h, frame_w = frame_rgb.shape[:2]
+        frame_size = np.array([frame_w, frame_h])
+        court_size = np.array(court_constants.court_size)
         pred_centers, pred_cls, pred_confs = self.predict_keypoints(frame_rgb)
-        cls_to_points = defaultdict(list)
-        for px, py, pcls in court_points:
-            cls_to_points[pcls].append((px, py))
         frame_points = []
         court_points = []
         for frame_point, point_cls in zip(pred_centers, pred_cls):
-            if point_cls not in cls_to_points:
+            if point_cls not in court_constants.cls_to_points:
                 continue
-            court_point = cls_to_points[point_cls][0]
-            frame_points.append([frame_point])
-            court_points.append([court_point])
+            court_point = court_constants.cls_to_points[point_cls][0]
+            frame_points.append(np.array(frame_point) / frame_size)
+            court_points.append(np.array(court_point) / court_size)
         frame_points = np.array(frame_points)
         court_points = np.array(court_points)
         try:
-            H, mask = cv2.findHomography(frame_points, court_points)
+            H, mask = cv2.findHomography(frame_points, court_points, method=cv2.RANSAC)
         except cv2.error:
             return pred_centers, pred_cls, pred_confs, None
         return pred_centers, pred_cls, pred_confs, H
 
-    def homographies_dist(self, H1, H2, width, height):
+    def cosine_similarity(self, v1, v2, eps = 1e-9):
+        return torch.dot(v1, v2) / (torch.linalg.norm(v1) * torch.linalg.norm(v2) + eps)
+
+    def homographies_dist(self, H1, H2):
         """
         Estimates distance between two homographies.
         """
-        H1 = H1.copy()
-        H2 = H2.copy()
-        H1[:, 0] *= width
-        H1[:, 1] *= height
-        H2[:, 0] *= width
-        H2[:, 1] *= height
-        D = np.linalg.inv(H1) @ H2
-        _, S, _ = np.linalg.svd(D)
-        return np.linalg.cond(D)
+        vecs = []
+        for x in [0, 0.5, 1]:
+            for y in [0, 0.5, 1]:
+                vecs.append((x, y, 1))
+        D = torch.linalg.inv(H1) @ H2
+        Dinv = torch.linalg.inv(H2) @ H1
+        res = 0
+        for v in vecs:
+            v = torch.tensor(v, dtype=H1.dtype)
+            for H in [D, Dinv]:
+                Hv = H @ v
+                res = res + 1 - self.cosine_similarity(Hv, v)
+        return res
 
-    def remove_bad_homographies(self, homographies, width, height, alpha=5, max_skip=5):
-        not_none = []
+    def smoothe_homographies(self, homographies, keypoints_detections, 
+                            frames_sizes, court_constants, alpha = 100, dtype=torch.float32):
+        homographies = deepcopy(homographies)
+        for i in range(len(homographies) - 1):
+            if homographies[i + 1] is None:
+                homographies[i + 1] = homographies[i]
+        for i in range(len(homographies) - 1, 0, -1):
+            if homographies[i - 1] is None:
+                homographies[i - 1] = homographies[i]
+        if homographies[0] is None:
+            return homographies
         for i, H in enumerate(homographies):
-            if H is not None:
-                not_none.append(i)
-        n = len(not_none)
+            norm = np.sqrt((H * H).sum())
+            H /= norm
+            homographies[i] = torch.tensor(H, requires_grad=True, dtype=dtype)
+        def calc_ith_loss(i):
+            loss = torch.tensor(0, dtype=dtype)
+            if i < len(homographies) - 1:
+                loss += self.homographies_dist(homographies[i], homographies[i + 1]) ** 2 * alpha
+            # for keypoint_center, keypoint_cls in zip(*keypoints_detections[i]):
+            #     if keypoint_cls not in court_constants.cls_to_points:
+            #         continue
+            #     keypoint_center = torch.tensor((*keypoint_center, 1), dtype=dtype)
+            #     keypoint_center /= torch.tensor((*frames_sizes[i], 1), dtype=dtype)
+            #     keypoint_center = homographies[i] @ keypoint_center
+            #     keypoint_needed = torch.tensor((*court_constants.cls_to_points[keypoint_cls][0], 1), dtype=dtype)
+            #     keypoint_needed /= torch.tensor((*court_constants.court_size, 1), dtype=dtype)
+            #     loss += (1 - self.cosine_similarity(keypoint_center, keypoint_needed))
+            return loss
+        def calc_loss():
+            loss = 0
+            for i in range(len(homographies)):
+                loss += calc_ith_loss(i)
+            return loss
 
-        def get_cost(i, j):
-            base_cost = alpha * (abs(i - j) - 1)
-            if i == 0 or i == n + 1 or j == 0 or j == n + 1:
-                return base_cost
-            pos_i = not_none[i - 1]
-            pos_j = not_none[j - 1]
-            # diff = abs(pos_i - pos_j)
-            hdist = self.homographies_dist(homographies[pos_i], homographies[pos_j], width, height)
-            return base_cost + hdist
+        print(f"Initial loss:{calc_loss():.3f}")
+        num_epochs = 0
+        optimizer = torch.optim.AdamW(homographies, lr=0.003)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+        batch_size = 32
+        for i in range(num_epochs):
+            frames_ids = list(range(len(homographies)))
+            np.random.shuffle(frames_ids)
+            full_loss = 0
+            for start in range(0, len(frames_ids), batch_size):
+                optimizer.zero_grad()
+                batch_frames_ids = frames_ids[start:start + batch_size]
+                tot_loss = 0
+                for j in batch_frames_ids:
+                    tot_loss = tot_loss + calc_ith_loss(j)
+                tot_loss.backward()
+                optimizer.step()
+                full_loss = full_loss + tot_loss.item()
+            scheduler.step()
+            with torch.no_grad():
+                for H in homographies:
+                    H /= torch.sqrt((H * H).sum())
+            print(f"Loss after {i} iterations:{full_loss:.3f}")
+        with torch.no_grad():
+            losses = [calc_ith_loss(i).item() for i in range(len(homographies))]
+        for i, H in enumerate(homographies):
+            homographies[i] = H.detach().numpy()
+        return homographies, losses
 
-        inf = 1e18
-        dp = [(inf, -1) for i in range(n + 2)]
 
-        dp[0] = (0, -1)
-        for i in range(1, n + 2):
-            for j in range(max(0, i - max_skip), i):
-                cost = dp[j][0]
-                cost += get_cost(j, i)
-                dp[i] = min(dp[i], (cost, j))
-        remaning = []
-        cur = n + 1
-        while cur > 0:
-            if cur <= n:
-                remaning.append(not_none[cur - 1])
-            cur = dp[cur][1]
-        remaining = list(reversed(remaning))
-        new_homographies = [None for i in range(len(homographies))]
-        for i in remaining:
-            new_homographies[i] = homographies[i]
-        # num_removed = len(not_none) - len(remaning)
-        # print("Removed: ", num_removed)
-        return new_homographies
 
-    def run(self, video_path: str, detections: PlayersDetections) -> None:
-        """
-        Process video frame-by-frame, compute homography, and enrich each
-        :class:`Player` with ``court_position`` (x_m, y_m in meters).
-        """
+    def extract_homographies_from_video(self, video_path: str, court_constants: CourtConstants):
 
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video: {video_path}")
 
         homographies = []
+        frames_sizes = []
+        keypoints_detections = []
         frame_id = 0
 
         while True:
@@ -203,24 +231,44 @@ class CourtDetector:
                 break
             height, width, _ = frame_bgr.shape
             frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-            pred_centers, pred_cls, pred_confs, H = self.predict_court_homography(frame_rgb)
+            pred_centers, pred_cls, pred_confs, H = self.predict_court_homography(frame_rgb, court_constants)
+            keypoints_detections.append((pred_centers, pred_cls))
             homographies.append(H)
+            frames_sizes.append((width, height))
             frame_id += 1
 
         cap.release()
 
-        new_homographies = self.remove_bad_homographies(homographies, width, height)
+        # new_homographies = self.remove_bad_homographies(homographies)
+        new_homographies, losses = self.smoothe_homographies(homographies, keypoints_detections, frames_sizes, court_constants)
 
-        for frame_id, H in enumerate(new_homographies):
+        return new_homographies, frames_sizes, keypoints_detections, losses
+
+    def run(self, video_path: str, detections: PlayersDetections, court_type: CourtType = CourtType.NBA) -> None:
+        """
+        Process video frame-by-frame, compute homography, and enrich each
+        :class:`Player` with ``court_position`` (x_m, y_m in meters).
+        """
+        
+        court_constants = CourtConstants(court_type)
+        homographies, frames_sizes, keypoint_detections, losses = self.extract_homographies_from_video(video_path, court_constants)
+
+        court_w, court_h = court_constants.court_size
+        for frame_id, H in enumerate(homographies):
             if H is None:
                 continue
+            if frame_id + 1 < len(homographies) and homographies[frame_id + 1] is not None:
+                H2 = homographies[frame_id + 1]
+                dst = self.homographies_dist(H, H2)
+                get_logger().log(frame_id, f"Homo dist: {dst}")
+            frame_w, frame_h = frames_sizes[frame_id]
             for player in detections.get(frame_id, []):
                 x1, y1, x2, y2 = player.bbox
-                cx = (x1 + x2) / 2.0
-                cy = float(y2)  # bottom middle of bbox
+                cx = (x1 + x2) / 2.0 / frame_w
+                cy = float(y2) / frame_h
                 pts = project_homography(np.array([[cx, cy]]), H)
                 if pts.size >= 2:
-                    player.court_position = (float(pts[0, 0]), float(pts[0, 1]))
+                    player.court_position = (float(pts[0, 0]) * court_w, float(pts[0, 1] * court_h))
 
 
 def main():
