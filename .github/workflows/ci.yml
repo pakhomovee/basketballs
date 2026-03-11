@@ -3,46 +3,10 @@ name: CI
 on:
   pull_request:
 
-  workflow_dispatch:
-    
-
 env:
-  # Changeable formatting parameters
-  CXX_LINE_LENGTH: "100"
   PY_LINE_LENGTH: "100"
 
 jobs:
-  cpp-style:
-    name: C++ Codestyle (clang-format)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install clang-format
-        run: sudo apt-get update && sudo apt-get install -y clang-format
-
-      - name: Check C++ formatting
-        run: |
-          # Create .clang-format if missing, respecting env var.
-          # If .clang-format exists (e.g. checked in), we use it as is.
-          if [ ! -f .clang-format ]; then
-            echo "Generating .clang-format with ColumnLimit: ${CXX_LINE_LENGTH}"
-            cat > .clang-format <<EOF
-          BasedOnStyle: Google
-          IndentWidth: 4
-          ColumnLimit: ${CXX_LINE_LENGTH}
-          EOF
-          else
-            echo "Using existing .clang-format"
-          fi
-
-          # Run clang-format on all tracked C/C++ files.
-          # -z/-0 handles filenames with spaces safely.
-          # -r prevents running if no files are found.
-          git ls-files -z '*.cc' '*.cpp' '*.cxx' '*.c' '*.h' '*.hpp' '*.hh' '*.hxx' \
-            | xargs -0 -r clang-format --dry-run --Werror
-
   python-style:
     name: Python Codestyle
     runs-on: ubuntu-latest

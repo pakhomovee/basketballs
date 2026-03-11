@@ -1,0 +1,37 @@
+name: Pipeline
+
+# Trigger: (1) Actions → Pipeline → Run workflow  (2) Add label "run-pipeline" to a PR
+# Create the label once: repo Settings → Labels → New label "run-pipeline"
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+jobs:
+  run:
+    name: Run main.py
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-pipeline'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache models
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: pipeline-models-v1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: "requirements.txt"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run main pipeline
+        working-directory: components
+        run: python3 main.py ../dataset/sample.mp4 --output_both=out.mp4
