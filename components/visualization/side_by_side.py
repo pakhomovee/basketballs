@@ -28,6 +28,9 @@ _TEAM_COLORS = {
     1: (255, 100, 0),  # blue
 }
 _TEAM_UNKNOWN_COLOR = (0, 255, 0)  # green
+# BGR color for the jersey number box (top-right of player bbox)
+_NUMBER_BOX_COLOR = (0, 0, 255)  # bright red
+_NUMBER_BOX_PAD = 4
 
 
 def _render_logs_panel(
@@ -160,6 +163,28 @@ def make_side_by_side_video(
                         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
                         cv2.rectangle(frame_top, (x1, y1 - th - 4), (x1 + tw + 2, y1), color, -1)
                         cv2.putText(frame_top, label, (x1 + 1, y1 - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+                        if player.number is not None and player.number.num is not None:
+                            num_label = str(player.number.num)
+                            (nw, nh), _ = cv2.getTextSize(num_label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                            # Number box at top-right of player bbox: right edge = x2, bottom = y1
+                            nx1 = int(x2) - nw - 2 * _NUMBER_BOX_PAD
+                            ny1 = int(y1) - nh - 2 * _NUMBER_BOX_PAD
+                            nx2 = int(x2)
+                            ny2 = int(y1)
+                            cv2.rectangle(frame_top, (nx1, ny1), (nx2, ny2), _NUMBER_BOX_COLOR, -1)
+                            cv2.rectangle(frame_top, (nx1, ny1), (nx2, ny2), (0, 0, 0), 1)
+                            # putText (x,y) is bottom-left of baseline; place text inside box
+                            text_x = nx1 + _NUMBER_BOX_PAD
+                            text_y = ny2 - _NUMBER_BOX_PAD  # baseline
+                            cv2.putText(
+                                frame_top,
+                                num_label,
+                                (text_x, text_y),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.6,
+                                (0, 0, 0),
+                                2,
+                            )
 
             frame_bottom = cv2.resize(frame_bottom, (target_bottom_w, target_bottom_h))
 

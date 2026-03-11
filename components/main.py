@@ -14,7 +14,7 @@ from reidentification import extract_reid_embeddings
 from common.classes import CourtType
 from common.logger import get_logger
 from common.utils.utils import download
-from detector import Detector, get_video_players_detections
+from detector import Detector, enrich_detections_with_numbers
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -77,6 +77,8 @@ def main(
         download("https://disk.yandex.ru/d/o7lVmeYl0xmn4g", "court_detection_model.pt", "../models")
     if not os.path.exists("../models/best-4.pt"):
         download("https://disk.yandex.ru/d/MAGAbYxRFEvX6w", "best-4.pt", "../models")
+    if not os.path.exists("../models/parseq_flex.ckpt"):
+        download("https://disk.yandex.ru/d/QucoCUmnUbLMHw", "parseq_flex.ckpt", "../models")
     if not os.path.exists("../models/reid_model.pth"):
         download("https://disk.yandex.ru/d/Ak2skkMBdVCqmQ", "reid_model.pth", "../models")
     if gt_path is None:
@@ -85,23 +87,24 @@ def main(
         cache_embeds = not (no_cache or no_cache_embeds)
         save_cache = not no_cache
 
-        detections = load_detections_cache(
+        players_detections = load_detections_cache(
             video_path,
             seg_model,
             use_detector_cache=cache_detector,
             use_embeddings_cache=cache_embeds,
         )
-        if detections is None:
+        if players_detections is None:
             detector = Detector()
             all_detections = detector.detect_video(video_path)
-            detections = get_video_players_detections(all_detections)
+            players_detections, referees_detections, numbers_detections = enrich_detections_with_numbers(video_path, all_detections) 
+
             court_detector = CourtDetector()
-            court_detector.run(video_path, detections)
-            _extract_embeddings(video_path, detections, seg_model, "../models/reid_model.pth")
+            court_detector.run(video_path, players_detections)
+            _extract_embeddings(video_path, players_detections, seg_model, "../models/reid_model.pth")
             if save_cache:
                 save_detections_cache(
                     video_path,
-                    detections,
+                    players_detections,
                     seg_model,
                     use_detector_cache=cache_detector,
                     use_embeddings_cache=cache_embeds,
@@ -109,11 +112,11 @@ def main(
         else:
             if no_cache_embeds and not no_cache:
                 # Loaded bbox + court, but recompute embeddings
-                for players in detections.values():
+                for players in players_detections.values():
                     for p in players:
                         p.embedding = None
-                _extract_embeddings(video_path, detections, seg_model, "../models/reid_model.pth")
-                save_detections_cache(video_path, detections, seg_model)
+                _extract_embeddings(video_path, players_detections, seg_model, "../models/reid_model.pth")
+                save_detections_cache(video_path, players_detections, seg_model)
             else:
                 parts = []
                 if cache_detector:
@@ -123,30 +126,30 @@ def main(
                 print(f"Loaded {' and '.join(parts)} from cache")
     else:
         detector = MockDetector(gt_path, normalized=True)
-        detections = detector.detect(video_path)
+        players_detections = detector.detect(video_path)
         court_detector = CourtDetector()
-        court_detector.run(video_path, detections)
-        _extract_embeddings(video_path, detections, seg_model, "../models/reid_model.pth")
+        court_detector.run(video_path, players_detections)
+        _extract_embeddings(video_path, players_detections, seg_model, "../models/reid_model.pth")
 
     frame_width = _get_video_frame_width(video_path)
     tracker = FlowTracker(num_tracks=10, frame_width=frame_width)
-    tracker.track(detections)
+    tracker.track(players_detections)
 
     team_clustering = TeamClustering()
-    team_clustering.run(detections, k_frames=k_frames)
+    team_clustering.run(players_detections, k_frames=k_frames)
 
     if enable_smoothing:
-        smooth_detection_coordinates(detections)
+        smooth_detection_coordinates(players_detections)
 
     if output_2d_path is None:
         stem = Path(video_path).stem
         output_2d_path = str(Path(video_path).parent / f"{stem}_2d.mp4")
 
-    write_2d_court_video(detections, output_2d_path, court_type, video_path)
+    write_2d_court_video(players_detections, output_2d_path, court_type, video_path)
     print(f"Saved 2D video to {output_2d_path}")
 
     if output_both is not None:
-        make_side_by_side_video(video_path, output_2d_path, output_both, detections=detections)
+        make_side_by_side_video(video_path, output_2d_path, output_both, detections=players_detections)
 
 
 if __name__ == "__main__":

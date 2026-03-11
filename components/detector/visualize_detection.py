@@ -3,8 +3,11 @@ from detector import (
     Detector,
     get_video_players_detections,
     get_video_ball_detections,
+    get_video_referee_detections,
     get_frame_number_detections,
+    match_numbers_to_players,
 )
+from detector.number_recognizer_parseq import recognize_numbers_in_frame as recognize_numbers_parseq
 
 import cv2
 import numpy as np
@@ -55,14 +58,16 @@ def video_with_ball_bbox_yolo(
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
     color_ball = (0, 165, 255)  # BGR orange (ball)
-    color_player = (255, 165, 0)  # BGR cyan (players)
-    color_number = (0, 255, 0)  # BGR green (number)
+    color_player = (255, 165, 0)  # BGR cyan (players without number)
+    color_player_with_number = (0, 255, 0)  # BGR green (players with assigned number)
+    color_referee = (255, 0, 255)  # BGR magenta (referees)
     thickness = 2
 
     pbar2 = tqdm(total=total_frames, desc="Pass 2: draw", unit="frame")
 
-    player_detections = get_video_players_detections(detections, conf_threshold=0.25)
+    player_detections = get_video_players_detections(detections, conf_threshold=0.1)
     ball_detections = get_video_ball_detections(detections)
+    referee_detections = get_video_referee_detections(detections, conf_threshold=0.1)
 
     # Directory for frames with player detections > 10 or ball detections > 1
     many_players_dir = Path(input_path).parent / f"{Path(input_path).stem}_frames_many_players"
@@ -84,7 +89,16 @@ def video_with_ball_bbox_yolo(
 
             players_in_frame = player_detections.get(i, [])
             balls_in_frame = ball_detections.get(i, [])
-            numbers_in_frame = get_frame_number_detections(detections[i], frame=frame, conf_threshold=0.25)
+            referees_in_frame = referee_detections.get(i, [])
+            numbers_in_frame = get_frame_number_detections(
+                detections[i], frame=None, conf_threshold=0.25
+            )
+            recognize_numbers_parseq(frame, numbers_in_frame, padding=5, ocr_conf_threshold=0.999)
+            match_numbers_to_players(
+                {i: players_in_frame},
+                {i: numbers_in_frame},
+                {i: referees_in_frame},
+            )
 
             for ball_detection in balls_in_frame:
                 detection = ball_detection.bbox
@@ -99,21 +113,31 @@ def video_with_ball_bbox_yolo(
             for player_detection in players_in_frame:
                 detection = player_detection.bbox
                 x1, y1, x2, y2 = detection[0], detection[1], detection[2], detection[3]
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color_player, thickness)
-                if player_detection.confidence is not None:
+                has_recognized_num = (
+                    player_detection.number is not None
+                    and player_detection.number.num is not None
+                )
+                color = color_player_with_number if has_recognized_num else color_player
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+                if has_recognized_num:
+                    label = str(player_detection.number.num)
+                elif player_detection.confidence is not None:
                     label = f"{player_detection.confidence:.2f}"
+                else:
+                    label = None
+                if label is not None:
                     (tw, th), _ = cv2.getTextSize(label, font, font_scale, font_thickness)
-                    cv2.rectangle(frame, (x1, y1 - th - 4), (x1 + tw + 4, y1), color_player, -1)
+                    cv2.rectangle(frame, (x1, y1 - th - 4), (x1 + tw + 4, y1), color, -1)
                     cv2.putText(frame, label, (x1 + 2, y1 - 2), font, font_scale, (0, 0, 0), font_thickness)
 
-            for number_detection in numbers_in_frame:
-                detection = number_detection.bbox
+            for referee_detection in referees_in_frame:
+                detection = referee_detection.bbox
                 x1, y1, x2, y2 = detection[0], detection[1], detection[2], detection[3]
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color_number, thickness)
-                if number_detection.num is not None:
-                    label = str(number_detection.num)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color_referee, thickness)
+                if referee_detection.confidence is not None:
+                    label = f"{referee_detection.confidence:.2f}"
                     (tw, th), _ = cv2.getTextSize(label, font, font_scale, font_thickness)
-                    cv2.rectangle(frame, (x1, y1 - th - 4), (x1 + tw + 4, y1), color_number, -1)
+                    cv2.rectangle(frame, (x1, y1 - th - 4), (x1 + tw + 4, y1), color_referee, -1)
                     cv2.putText(frame, label, (x1 + 2, y1 - 2), font, font_scale, (0, 0, 0), font_thickness)
 
             num_players = len(players_in_frame)
@@ -129,6 +153,7 @@ def video_with_ball_bbox_yolo(
 
             writer.write(frame)
             pbar2.update(1)
+            # break
     finally:
         pbar2.close()
         cap.release()
@@ -141,4 +166,4 @@ def video_with_ball_bbox_yolo(
     return output_path
 
 
-video_with_ball_bbox_yolo("./nba1.mp4", "./kek1.mp4")
+video_with_ball_bbox_yolo("./test_nba3.mp4", "./test_kek3.mp4")
