@@ -124,8 +124,7 @@ def get_frame_referee_detections(
     nms_iou_threshold: float = 0.9,
 ) -> list[Referee]:
     referee_detections = [
-        d for d in frame_detections.detections
-        if d.class_id == REFEREE_CLASS_ID and d.confidence >= conf_threshold
+        d for d in frame_detections.detections if d.class_id == REFEREE_CLASS_ID and d.confidence >= conf_threshold
     ]
     referee_detections = _nms_detections(referee_detections, iou_threshold=nms_iou_threshold)
     referee_detections.sort(key=lambda x: -x.confidence)
@@ -171,12 +170,7 @@ def _bbox_inside(inner: list[int], outer: list[int]) -> bool:
     """True if inner bbox [x1,y1,x2,y2] is entirely inside outer bbox."""
     if len(inner) < 4 or len(outer) < 4:
         return False
-    return (
-        outer[0] <= inner[0]
-        and outer[1] <= inner[1]
-        and inner[2] <= outer[2]
-        and inner[3] <= outer[3]
-    )
+    return outer[0] <= inner[0] and outer[1] <= inner[1] and inner[2] <= outer[2] and inner[3] <= outer[3]
 
 
 def match_numbers_to_players(
@@ -228,12 +222,8 @@ def enrich_detections_with_numbers(
     get_frame_number_detections), then match_numbers_to_players. Mutates and returns
     players_detections with .number set where a number was assigned.
     """
-    players_detections = get_video_players_detections(
-        video_detections, conf_threshold=player_conf_threshold
-    )
-    referees_detections = get_video_referee_detections(
-        video_detections, conf_threshold=referee_conf_threshold
-    )
+    players_detections = get_video_players_detections(video_detections, conf_threshold=player_conf_threshold)
+    referees_detections = get_video_referee_detections(video_detections, conf_threshold=referee_conf_threshold)
     number_detections: NumberDetections = {}
     cap = cv2.VideoCapture(video_path)
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -247,13 +237,13 @@ def enrich_detections_with_numbers(
                 break
             if video_detections[idx].frame_id != i:
                 continue
-            
+
             number_detections[i] = get_frame_number_detections(
                 video_detections[idx],
                 frame=frame,
                 conf_threshold=number_conf_threshold,
                 ocr_conf_threshold=ocr_conf_threshold,
-                save_crops_dir=save_crops_dir
+                save_crops_dir=save_crops_dir,
             )
             idx += 1
     finally:

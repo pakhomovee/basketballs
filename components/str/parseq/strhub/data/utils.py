@@ -30,7 +30,7 @@ class CharsetAdapter:
         super().__init__()
         self.lowercase_only = target_charset == target_charset.lower()
         self.uppercase_only = target_charset == target_charset.upper()
-        self.unsupported = re.compile(f'[^{re.escape(target_charset)}]')
+        self.unsupported = re.compile(f"[^{re.escape(target_charset)}]")
 
     def __call__(self, label):
         if self.lowercase_only:
@@ -38,12 +38,11 @@ class CharsetAdapter:
         elif self.uppercase_only:
             label = label.upper()
         # Remove unsupported characters
-        label = self.unsupported.sub('', label)
+        label = self.unsupported.sub("", label)
         return label
 
 
 class BaseTokenizer(ABC):
-
     def __init__(self, charset: str, specials_first: tuple = (), specials_last: tuple = ()) -> None:
         self._itos = specials_first + tuple(charset) + specials_last
         self._stoi = {s: i for i, s in enumerate(self._itos)}
@@ -56,7 +55,7 @@ class BaseTokenizer(ABC):
 
     def _ids2tok(self, token_ids: List[int], join: bool = True) -> str:
         tokens = [self._itos[i] for i in token_ids]
-        return ''.join(tokens) if join else tokens
+        return "".join(tokens) if join else tokens
 
     @abstractmethod
     def encode(self, labels: List[str], device: Optional[torch.device] = None) -> Tensor:
@@ -100,9 +99,9 @@ class BaseTokenizer(ABC):
 
 
 class Tokenizer(BaseTokenizer):
-    BOS = '[B]'
-    EOS = '[E]'
-    PAD = '[P]'
+    BOS = "[B]"
+    EOS = "[E]"
+    PAD = "[P]"
 
     def __init__(self, charset: str) -> None:
         specials_first = (self.EOS,)
@@ -111,8 +110,10 @@ class Tokenizer(BaseTokenizer):
         self.eos_id, self.bos_id, self.pad_id = [self._stoi[s] for s in specials_first + specials_last]
 
     def encode(self, labels: List[str], device: Optional[torch.device] = None) -> Tensor:
-        batch = [torch.as_tensor([self.bos_id] + self._tok2ids(y) + [self.eos_id], dtype=torch.long, device=device)
-                 for y in labels]
+        batch = [
+            torch.as_tensor([self.bos_id] + self._tok2ids(y) + [self.eos_id], dtype=torch.long, device=device)
+            for y in labels
+        ]
         return pad_sequence(batch, batch_first=True, padding_value=self.pad_id)
 
     def _filter(self, probs: Tensor, ids: Tensor) -> Tuple[Tensor, List[int]]:
@@ -123,12 +124,12 @@ class Tokenizer(BaseTokenizer):
             eos_idx = len(ids)  # Nothing to truncate.
         # Truncate after EOS
         ids = ids[:eos_idx]
-        probs = probs[:eos_idx + 1]  # but include prob. for EOS (if it exists)
+        probs = probs[: eos_idx + 1]  # but include prob. for EOS (if it exists)
         return probs, ids
 
 
 class CTCTokenizer(BaseTokenizer):
-    BLANK = '[B]'
+    BLANK = "[B]"
 
     def __init__(self, charset: str) -> None:
         # BLANK uses index == 0 by default

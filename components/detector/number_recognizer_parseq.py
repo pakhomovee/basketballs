@@ -132,6 +132,7 @@ def _predict_crop(model, transform, crop_bgr: np.ndarray, device: str):
     """Run PARSeq on one crop (BGR numpy). Returns (predicted_str, confidence float)."""
     import torch
     from PIL import Image
+
     rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
     pil = Image.fromarray(rgb)
     tensor = transform(pil).unsqueeze(0).to(device)
@@ -208,7 +209,7 @@ def recognize_numbers_in_frame(
                     break
                 if votes[-1] != votes[0]:
                     break
-                
+
             if len(votes) != _N_VOTES or not all(x is not None for x in votes) or len(set(votes)) != 1:
                 number.num = None
             else:

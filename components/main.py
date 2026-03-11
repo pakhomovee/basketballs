@@ -96,7 +96,9 @@ def main(
         if players_detections is None:
             detector = Detector()
             all_detections = detector.detect_video(video_path)
-            players_detections, referees_detections, numbers_detections = enrich_detections_with_numbers(video_path, all_detections) 
+            players_detections, referees_detections, numbers_detections = enrich_detections_with_numbers(
+                video_path, all_detections
+            )
 
             court_detector = CourtDetector()
             court_detector.run(video_path, players_detections)

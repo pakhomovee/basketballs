@@ -90,9 +90,7 @@ def video_with_ball_bbox_yolo(
             players_in_frame = player_detections.get(i, [])
             balls_in_frame = ball_detections.get(i, [])
             referees_in_frame = referee_detections.get(i, [])
-            numbers_in_frame = get_frame_number_detections(
-                detections[i], frame=None, conf_threshold=0.25
-            )
+            numbers_in_frame = get_frame_number_detections(detections[i], frame=None, conf_threshold=0.25)
             recognize_numbers_parseq(frame, numbers_in_frame, padding=5, ocr_conf_threshold=0.999)
             match_numbers_to_players(
                 {i: players_in_frame},
@@ -113,10 +111,7 @@ def video_with_ball_bbox_yolo(
             for player_detection in players_in_frame:
                 detection = player_detection.bbox
                 x1, y1, x2, y2 = detection[0], detection[1], detection[2], detection[3]
-                has_recognized_num = (
-                    player_detection.number is not None
-                    and player_detection.number.num is not None
-                )
+                has_recognized_num = player_detection.number is not None and player_detection.number.num is not None
                 color = color_player_with_number if has_recognized_num else color_player
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
                 if has_recognized_num:
