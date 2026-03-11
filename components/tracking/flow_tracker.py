@@ -15,6 +15,7 @@ optimization that eliminates the need for post-hoc track merging.
 
 from __future__ import annotations
 
+import bisect
 import logging
 from collections import defaultdict
 
@@ -74,9 +75,10 @@ class FlowTracker:
     max_speed : float
         Maximum player speed in meters/second. Used for field-coordinate
         gating — links exceeding this speed are pruned.
-    bbox_gate : float
-        Maximum pixel distance (bbox bottom-center) for linking when field
-        coordinates are unavailable. Scaled by sqrt(frame_gap).
+    bbox_scale : float
+        Scale (pixels) for exponential spatial cost. Cost = exp(px_dist / scale) - 1,
+        with scale = bbox_scale * sqrt(frame_gap).  No hard gate — links are never
+        rejected by distance, but teleportation is exponentially discouraged.
     w_spatial, w_app, w_iou : float
         Weights for spatial, appearance, and IoU cost components.
     w_extended : float
@@ -115,6 +117,23 @@ class FlowTracker:
         Number of track positions to look back/forward when building the
         past/future mean tracklet embeddings for each detection during
         multi-pass refinement.
+    w_color : float
+        Weight for continuous color-embedding cosine distance in link costs.
+        Provides soft team-aware association without binary clustering.
+        Also used in extended cost (mean tracklet color embeddings).
+    max_occlusion : int
+        Maximum frame gap bridgeable by an occlusion edge.  An occluded
+        player can be linked across at most this many frames by riding
+        along an existing track.
+    occlusion_gate : float
+        Maximum pixel distance (bbox bottom-center) between a detection
+        and an existing track's detection for the pair to be considered
+        an occlusion entry/exit point.
+    occlusion_penalty : float
+        Per-frame additive cost on occlusion edges.  Kept small because
+        the skipped frames already carry no detection reward.
+    occlusion_start_pass : int
+        0-indexed pass at which occlusion edges are first added.
     """
 
     def __init__(
@@ -122,7 +141,7 @@ class FlowTracker:
         num_tracks: int = 10,
         max_skip: int = 15,
         max_speed: float = 10.0,
-        bbox_gate: float = 20.0,
+        bbox_scale: float = 20.0,
         w_spatial: float = 0.2,
         w_app: float = 0.6,
         w_iou: float = 0.2,
@@ -139,11 +158,16 @@ class FlowTracker:
         n_passes: int = 5,
         lookback: int = 5,
         oof_entry_cost: float = 0.5,
+        w_color: float = 0.3,
+        max_occlusion: int = 45,
+        occlusion_gate: float = 50.0,
+        occlusion_penalty: float = 0.1,
+        occlusion_start_pass: int = 2,
     ):
         self.num_tracks = num_tracks
         self.max_skip = max_skip
         self.max_speed = max_speed
-        self.bbox_gate = bbox_gate
+        self.bbox_scale = bbox_scale
         self.w_spatial = w_spatial
         self.w_app = w_app
         self.w_iou = w_iou
@@ -160,6 +184,11 @@ class FlowTracker:
         self.n_passes = n_passes
         self.lookback = lookback
         self.oof_entry_cost = oof_entry_cost
+        self.w_color = w_color
+        self.max_occlusion = max_occlusion
+        self.occlusion_gate = occlusion_gate
+        self.occlusion_penalty = occlusion_penalty
+        self.occlusion_start_pass = occlusion_start_pass
 
     def track(self, detections: dict) -> None:
         """Assign track IDs to all players using min-cost flow.
@@ -205,13 +234,16 @@ class FlowTracker:
         for pass_idx in range(self.n_passes):
             past_embs: dict[int, np.ndarray] | None = None
             future_embs: dict[int, np.ndarray] | None = None
+            past_color_embs: dict[int, np.ndarray] | None = None
+            future_color_embs: dict[int, np.ndarray] | None = None
             if tracks is not None:
-                past_embs, future_embs = self._compute_tracklet_embeddings(
+                past_embs, future_embs, past_color_embs, future_color_embs = self._compute_tracklet_embeddings(
                     tracks,
                     det_list,
                     lookback,
                 )
                 lookback *= 2
+                self.w_app *= 0.8
 
             tracks = self._solve_pass(
                 det_list,
@@ -223,7 +255,10 @@ class FlowTracker:
                 n_det,
                 past_embs,
                 future_embs,
+                past_color_embs,
+                future_color_embs,
                 pass_idx,
+                prev_tracks=tracks,
             )
 
         assert tracks is not None
@@ -247,56 +282,65 @@ class FlowTracker:
         tracks: list[list[int]],
         det_list: list[tuple[int, object]],
         lookback: int,
-    ) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
-        """Directional mean embeddings for each tracked detection.
-
-        Parameters
-        ----------
-        lookback : int
-            Window size (in track positions) for the past / future
-            averaging.  Doubled after every refinement pass by the caller.
+    ) -> tuple[
+        dict[int, np.ndarray],
+        dict[int, np.ndarray],
+        dict[int, np.ndarray],
+        dict[int, np.ndarray],
+    ]:
+        """Directional mean embeddings (reid + color) for each tracked detection.
 
         Returns
         -------
-        tuple[dict[int, np.ndarray], dict[int, np.ndarray]]
-            ``(past_embs, future_embs)`` where:
-            - ``past_embs[det_idx]`` is the mean embedding over the lookback
-              positions ending at (and including) the detection in its track.
-            - ``future_embs[det_idx]`` is the mean embedding over the lookback
-              positions starting at (and including) the detection in its track.
-
-        Only detections that belong to a track from the previous pass receive
-        entries.  Untracked detections are left out so ``_extended_cost``
-        falls back gracefully (returns None) for them.
+        (past_embs, future_embs, past_color_embs, future_color_embs)
+            Reid and color embeddings averaged over a lookback window in
+            each direction along the track.
         """
         past_embs: dict[int, np.ndarray] = {}
         future_embs: dict[int, np.ndarray] = {}
+        past_color_embs: dict[int, np.ndarray] = {}
+        future_color_embs: dict[int, np.ndarray] = {}
 
         for track in tracks:
             for pos, det_idx in enumerate(track):
-                # Past: positions [max(0, pos - lookback) .. pos] inclusive
                 past_start = max(0, pos - lookback)
-                past_vecs: list[np.ndarray] = []
+                past_reid: list[np.ndarray] = []
+                past_color: list[np.ndarray] = []
                 for s_idx in track[past_start : pos + 1]:
                     player = det_list[s_idx][1]
                     emb = player.reid_embedding if player.reid_embedding is not None else player.embedding
                     if emb is not None:
-                        past_vecs.append(emb)
-                if past_vecs:
-                    past_embs[det_idx] = np.mean(past_vecs, axis=0)
+                        past_reid.append(emb)
+                    if player.embedding is not None:
+                        past_color.append(player.embedding)
+                if past_reid:
+                    past_embs[det_idx] = np.mean(past_reid, axis=0)
+                if past_color:
+                    past_color_embs[det_idx] = np.mean(past_color, axis=0)
 
-                # Future: positions [pos .. min(len(track)-1, pos + lookback)] inclusive
                 future_end = min(len(track), pos + lookback + 1)
-                future_vecs: list[np.ndarray] = []
+                future_reid: list[np.ndarray] = []
+                future_color: list[np.ndarray] = []
                 for s_idx in track[pos:future_end]:
                     player = det_list[s_idx][1]
                     emb = player.reid_embedding if player.reid_embedding is not None else player.embedding
                     if emb is not None:
-                        future_vecs.append(emb)
-                if future_vecs:
-                    future_embs[det_idx] = np.mean(future_vecs, axis=0)
+                        future_reid.append(emb)
+                    if player.embedding is not None:
+                        future_color.append(player.embedding)
+                if future_reid:
+                    future_embs[det_idx] = np.mean(future_reid, axis=0)
+                if future_color:
+                    future_color_embs[det_idx] = np.mean(future_color, axis=0)
 
-        return past_embs, future_embs
+        return past_embs, future_embs, past_color_embs, future_color_embs
+
+    @staticmethod
+    def _color_cost(player_i, player_j) -> float:
+        """Cosine distance between color (histogram) embeddings.  0 if unavailable."""
+        if player_i.embedding is None or player_j.embedding is None:
+            return 0.0
+        return cosine_dist(player_i.embedding, player_j.embedding)
 
     def _extended_cost(
         self,
@@ -304,24 +348,159 @@ class FlowTracker:
         j: int,
         past_embs: dict[int, np.ndarray],
         future_embs: dict[int, np.ndarray],
+        past_color_embs: dict[int, np.ndarray] | None,
+        future_color_embs: dict[int, np.ndarray] | None,
     ) -> float | None:
-        """Squared cosine distance between the *past* mean embedding of
-        source ``i`` and the *future* mean embedding of target ``j``.
+        """Combined reid + color extended cost between mean tracklet embeddings.
 
-        Squaring makes the penalty super-linear: same-person links (low
-        cosine dist ~0.2 → 0.04) are barely affected, while cross-identity
-        links (high cosine dist ~0.7 → 0.49) are hit much harder.  This
-        closes the gap with ``enter_cost`` and prevents the solver from
-        preferring cheap ID swaps over creating new tracks.
+        Reid component: squared cosine distance (super-linear penalty).
+        Color component: cosine distance weighted by ``w_color``.
 
-        Returns None when either embedding is unavailable.
+        Returns None when reid embeddings are unavailable for either side.
         """
         emb_i = past_embs.get(i)
         emb_j = future_embs.get(j)
         if emb_i is None or emb_j is None:
             return None
         d = cosine_dist(emb_i, emb_j)
-        return d * d
+        cost = d * d
+
+        if past_color_embs is not None and future_color_embs is not None:
+            c_i = past_color_embs.get(i)
+            c_j = future_color_embs.get(j)
+            if c_i is not None and c_j is not None:
+                cost += self.w_color * cosine_dist(c_i, c_j)
+
+        return cost
+
+    # ------------------------------------------------------------------
+    # Occlusion handling
+    # ------------------------------------------------------------------
+
+    def _build_occlusion_edges(
+        self,
+        mcf: MinCostFlow,
+        det_list: list[tuple[int, object]],
+        frame_to_dets: dict[int, list[int]],
+        n_det: int,
+        prev_tracks: list[list[int]],
+        past_embs: dict[int, np.ndarray] | None,
+        future_embs: dict[int, np.ndarray] | None,
+        past_color_embs: dict[int, np.ndarray] | None,
+        future_color_embs: dict[int, np.ndarray] | None,
+    ) -> int:
+        """Add long-range occlusion edges validated by existing tracks.
+
+        When player A is occluded by player B, A's detection disappears
+        and coincides with B's track.  For each detection *i* that is
+        spatially close to some track *T* (but not on *T*), we scan *T*
+        forward and add edges ``d_out(i) → d_in(j)`` for every detection
+        *j* (also close to *T*) in the gap range
+        ``(max_skip, max_occlusion]``.  The cost is appearance-based
+        plus a per-frame penalty — no detection reward is collected for
+        the skipped frames.
+        """
+        det_to_track: dict[int, int] = {}
+        track_at_frame: list[dict[int, int]] = []
+        track_sorted_frames: list[list[int]] = []
+        for t_idx, track in enumerate(prev_tracks):
+            fm: dict[int, int] = {}
+            for d in track:
+                det_to_track[d] = t_idx
+                fm[det_list[d][0]] = d
+            track_at_frame.append(fm)
+            track_sorted_frames.append(sorted(fm.keys()))
+
+        n_occ = 0
+        gate = self.occlusion_gate
+        min_gap = self.max_skip + 1
+        max_gap = self.max_occlusion
+
+        for i in range(n_det):
+            frame_i = det_list[i][0]
+            player_i = det_list[i][1]
+            bbox_i = player_i.bbox
+            if not bbox_i or len(bbox_i) < 4:
+                continue
+
+            i_track = det_to_track.get(i)
+
+            for t_idx in range(len(prev_tracks)):
+                if t_idx == i_track:
+                    continue
+
+                fm = track_at_frame[t_idx]
+                if frame_i not in fm:
+                    continue
+
+                t_det_i = fm[frame_i]
+                t_bbox_i = det_list[t_det_i][1].bbox
+                if not t_bbox_i or len(t_bbox_i) < 4:
+                    continue
+
+                if bbox_bottom_mid_distance(bbox_i, t_bbox_i) > gate:
+                    continue
+
+                # Track t_idx is close to detection i — scan forward
+                # along the track for valid exit points.
+                frames = track_sorted_frames[t_idx]
+                lo = bisect.bisect_left(frames, frame_i + min_gap)
+                for fi in range(lo, len(frames)):
+                    frame_j = frames[fi]
+                    gap = frame_j - frame_i
+                    if gap > max_gap:
+                        break
+
+                    t_det_j = fm[frame_j]
+                    t_bbox_j = det_list[t_det_j][1].bbox
+                    if not t_bbox_j or len(t_bbox_j) < 4:
+                        continue
+
+                    if frame_j not in frame_to_dets:
+                        continue
+
+                    for j in frame_to_dets[frame_j]:
+                        j_track = det_to_track.get(j)
+                        if j_track == t_idx:
+                            continue
+                        if i_track is not None and j_track == i_track:
+                            continue
+
+                        player_j = det_list[j][1]
+                        bbox_j = player_j.bbox
+                        if not bbox_j or len(bbox_j) < 4:
+                            continue
+
+                        if bbox_bottom_mid_distance(bbox_j, t_bbox_j) > gate:
+                            continue
+
+                        app_cost = self._appearance_cost(player_i, player_j)
+                        if app_cost is None:
+                            continue
+
+                        color = self._color_cost(player_i, player_j)
+                        cost = app_cost + self.w_color * color + gap * self.occlusion_penalty
+                        if past_embs is not None and future_embs is not None:
+                            ext = self._extended_cost(
+                                i,
+                                j,
+                                past_embs,
+                                future_embs,
+                                past_color_embs,
+                                future_color_embs,
+                            )
+                            if ext is not None:
+                                cost += self.w_extended * ext
+
+                        mcf.add_edge(
+                            _det_out(i, n_det),
+                            _det_in(j, n_det),
+                            1,
+                            cost,
+                        )
+                        n_occ += 1
+
+        return n_occ
 
     # ------------------------------------------------------------------
     # Single MCMF pass (graph build + solve + extract)
@@ -338,7 +517,10 @@ class FlowTracker:
         n_det: int,
         past_embs: dict[int, np.ndarray] | None,
         future_embs: dict[int, np.ndarray] | None,
+        past_color_embs: dict[int, np.ndarray] | None,
+        future_color_embs: dict[int, np.ndarray] | None,
         pass_idx: int,
+        prev_tracks: list[list[int]] | None = None,
     ) -> list[list[int]]:
         """Build the flow graph, solve MCMF, and return extracted tracks."""
 
@@ -402,7 +584,14 @@ class FlowTracker:
                             cost = self._link_cost(player_i, player_j, gap)
                             if cost is not None:
                                 if past_embs is not None and future_embs is not None:
-                                    ext = self._extended_cost(i, j, past_embs, future_embs)
+                                    ext = self._extended_cost(
+                                        i,
+                                        j,
+                                        past_embs,
+                                        future_embs,
+                                        past_color_embs,
+                                        future_color_embs,
+                                    )
                                     if ext is not None:
                                         cost += self.w_extended * ext
                                 mcf.add_edge(_det_out(i, n_det), _det_in(j, n_det), 1, cost)
@@ -434,18 +623,40 @@ class FlowTracker:
                                 if cost is not None:
                                     cost += self.oof_entry_cost
                                     if past_embs is not None and future_embs is not None:
-                                        ext = self._extended_cost(i, j, past_embs, future_embs)
+                                        ext = self._extended_cost(
+                                            i,
+                                            j,
+                                            past_embs,
+                                            future_embs,
+                                            past_color_embs,
+                                            future_color_embs,
+                                        )
                                         if ext is not None:
                                             cost += self.w_extended * ext
                                     mcf.add_edge(oof_node_i, _det_in(j, n_det), 1, cost)
                                     n_oof_links += 1
 
+        n_occ_links = 0
+        if prev_tracks is not None and pass_idx >= self.occlusion_start_pass:
+            n_occ_links = self._build_occlusion_edges(
+                mcf,
+                det_list,
+                frame_to_dets,
+                n_det,
+                prev_tracks,
+                past_embs,
+                future_embs,
+                past_color_embs,
+                future_color_embs,
+            )
+
         logger.info(
-            "Pass %d: %d detections, %d link edges, %d oof edges, %d nodes",
+            "Pass %d: %d detections, %d link edges, %d oof edges, %d occ edges, %d nodes",
             pass_idx + 1,
             n_det,
             n_links,
             n_oof_links,
+            n_occ_links,
             n_nodes,
         )
 
@@ -473,9 +684,12 @@ class FlowTracker:
         return False
 
     def _link_cost_oof(self, player_i, player_j, frame_gap: int) -> float | None:
-        """Link cost for out-of-frame path: appearance only (no spatial, IoU, or skip penalty)."""
-        _ = frame_gap  # kept for API symmetry with _link_cost
-        return self._appearance_cost(player_i, player_j)
+        """OOF link cost: appearance + color (no spatial / IoU / skip)."""
+        _ = frame_gap
+        app = self._appearance_cost(player_i, player_j)
+        if app is None:
+            return None
+        return app + self.w_color * self._color_cost(player_i, player_j)
 
     # ------------------------------------------------------------------
     # Link cost (DeepSORT-style: spatial + appearance + IoU)
@@ -490,18 +704,17 @@ class FlowTracker:
         return cosine_dist(emb_i, emb_j)
 
     def _link_cost(self, player_i, player_j, frame_gap: int, *, skip_penalty: bool = True) -> float | None:
-        """Cost of linking two detections. Returns None if gated out."""
-        # --- Spatial ---
+        """Cost of linking two detections. Exponential spatial cost discourages teleportation."""
+        # --- Spatial (exponential: no gate, but teleportation is heavily penalised) ---
         spatial_cost = 0.5
         bbox_i = player_i.bbox
         bbox_j = player_j.bbox
 
         if bbox_i and bbox_j and len(bbox_i) >= 4 and len(bbox_j) >= 4:
             px_dist = bbox_bottom_mid_distance(bbox_i, bbox_j)
-            max_px = self.bbox_gate * (frame_gap**0.5)
-            if px_dist > max_px:
-                return None
-            spatial_cost = px_dist / max(max_px, 1e-6)
+            scale = self.bbox_scale * (max(1, frame_gap) ** 0.5)
+            x = min(px_dist / max(scale, 1e-6), 15.0)  # clip to avoid overflow
+            spatial_cost = np.exp(x) - 1.0
 
         # --- Appearance ---
         app_cost = self._appearance_cost(player_i, player_j)
@@ -522,7 +735,9 @@ class FlowTracker:
         w_sp = self.w_spatial + extra * 0.5
         w_ap = self.w_app + extra * 0.5
 
-        cost = w_sp * spatial_cost + w_ap * app_cost + w_iou_eff * iou_cost
+        color = self._color_cost(player_i, player_j)
+
+        cost = w_sp * spatial_cost + w_ap * app_cost + w_iou_eff * iou_cost + self.w_color * color
         if skip_penalty:
             cost += max(0, frame_gap - 1) * self.skip_penalty
 
