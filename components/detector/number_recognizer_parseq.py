@@ -21,7 +21,7 @@ from common.classes.number import Number
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _MODELS_DIR = _REPO_ROOT / "models"
 # PARSeq checkpoint in models/ (e.g. parseq_epoch=24-....ckpt); no parseq.pt there
-_DEFAULT_CHECKPOINT = next(_MODELS_DIR.glob("parseq*.ckpt"), _MODELS_DIR / "parseq.pt")
+_DEFAULT_CHECKPOINT = next(_MODELS_DIR.glob("parseq*.ckpt"), _MODELS_DIR / "parseq_flex.ckpt")
 # Path to parseq package for strhub imports (use without pip install)
 _PARSEQ_ROOT = _REPO_ROOT / "components" / "str" / "parseq"
 
