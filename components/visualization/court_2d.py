@@ -132,7 +132,7 @@ def write_2d_court_video(
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
 
-    for frame_id in tqdm(range(1, total_frames + 1), desc="Writing 2D video"):
+    for frame_id in tqdm(range(total_frames), desc="Writing 2D video"):
         players = detections.get(frame_id, [])
         team1_xy = []
         team2_xy = []
