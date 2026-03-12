@@ -221,7 +221,7 @@ class CourtDetector:
         print(f"Removed {num_removed} homographies")
         return new_homographies
 
-    def smoothe_homographies(
+    def smooth_homographies(
         self,
         homographies,
         keypoints_detections,
@@ -231,7 +231,8 @@ class CourtDetector:
         dtype=torch.float32,
         device="cpu",
     ):
-
+        if len(homographies) == 0:
+            return homographies, None
         homographies = deepcopy(homographies)
         for i in range(len(homographies) - 1):
             if homographies[i + 1] is None:
@@ -240,7 +241,7 @@ class CourtDetector:
             if homographies[i - 1] is None:
                 homographies[i - 1] = homographies[i]
         if homographies[0] is None:
-            return homographies
+            return homographies, None
         for i, H in enumerate(homographies):
             norm = np.sqrt((H * H).sum())
             H /= norm
@@ -342,7 +343,7 @@ class CourtDetector:
         cap.release()
 
         homographies = self.remove_bad_homographies(homographies)
-        new_homographies, losses = self.smoothe_homographies(
+        new_homographies, losses = self.smooth_homographies(
             homographies, keypoints_detections, frames_sizes, court_constants
         )
 

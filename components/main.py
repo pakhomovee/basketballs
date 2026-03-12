@@ -130,7 +130,7 @@ def main(
         detector = MockDetector(gt_path, normalized=True)
         players_detections = detector.detect(video_path)
         court_detector = CourtDetector()
-        court_detector.run(video_path, players_detections)
+        court_detector.run(video_path, players_detections, court_type)
         _extract_embeddings(video_path, players_detections, seg_model, "../models/reid_model.pth")
 
     frame_width = _get_video_frame_width(video_path)
@@ -166,7 +166,6 @@ if __name__ == "__main__":
     parser.add_argument("--court_type", choices=["nba", "fiba"], default="nba")
     parser.add_argument("--k-frames", type=int, default=30, help="Sample every k frames for clustering")
     parser.add_argument("--no_smoothing", type=bool, default=False, help="Disable smoothing")
-    parser.add_argument("--max-track-length", type=int, default=60, help="Max track length. 0 = no limit")
     parser.add_argument("--no-cache", action="store_true", help="Disable all caching (don't load, don't save)")
     parser.add_argument("--no-cache-detector", action="store_true", help="Don't use cache for detector output")
     parser.add_argument("--no-cache-embeds", action="store_true", help="Don't use cache for embeddings")
