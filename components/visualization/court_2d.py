@@ -126,31 +126,38 @@ def write_2d_court_video(
 
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    cap.release()
-
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
 
-    for frame_id in tqdm(range(total_frames), desc="Writing 2D video"):
-        players = detections.get(frame_id, [])
-        team1_xy = []
-        team2_xy = []
-        for p in players:
-            if p.court_position is None or p.team_id is None:
-                continue
-            x_m, y_m = p.court_position
-            xy = np.array([[x_m, y_m]])
-            if p.team_id == 0:
-                team1_xy.append(xy)
-            else:
-                team2_xy.append(xy)
+    frame_id = 0
+    pbar = tqdm(desc="Writing 2D video")
+    try:
+        while True:
+            ret, _ = cap.read()
+            if not ret:
+                break
+            players = detections.get(frame_id, [])
+            team1_xy = []
+            team2_xy = []
+            for p in players:
+                if p.court_position is None or p.team_id is None:
+                    continue
+                x_m, y_m = p.court_position
+                xy = np.array([[x_m, y_m]])
+                if p.team_id == 0:
+                    team1_xy.append(xy)
+                else:
+                    team2_xy.append(xy)
 
-        team1_xy = np.vstack(team1_xy) if team1_xy else np.empty((0, 2))
-        team2_xy = np.vstack(team2_xy) if team2_xy else np.empty((0, 2))
-        ball_xy = (0.0, 0.0)
+            team1_xy = np.vstack(team1_xy) if team1_xy else np.empty((0, 2))
+            team2_xy = np.vstack(team2_xy) if team2_xy else np.empty((0, 2))
+            ball_xy = (0.0, 0.0)
 
-        frame = court_view.get_frame(team1_xy, team2_xy, ball_xy)
-        out.write(frame)
+            frame = court_view.get_frame(team1_xy, team2_xy, ball_xy)
+            out.write(frame)
 
-    out.release()
+            pbar.update(1)
+            frame_id += 1
+    finally:
+        cap.release()
+        out.release()

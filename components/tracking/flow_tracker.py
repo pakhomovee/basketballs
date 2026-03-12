@@ -22,11 +22,62 @@ from collections import defaultdict
 import numpy as np
 from tqdm import tqdm
 
-from common.distances import bbox_bottom_mid_distance, bbox_iou, cosine_dist
+from common.distances import bbox_bottom_mid_distance, bbox_iou, court_position_distance, cosine_dist
 from tracking.min_cost_flow import MinCostFlow
 
 logger = logging.getLogger(__name__)
 S, T = 0, 1
+
+
+def _kalman_smooth_positions(
+    positions: list[tuple[float, float]],
+    process_noise: float = 0.5,
+    measurement_noise: float = 1.0,
+) -> list[tuple[float, float]]:
+    """Smooth a sequence of (x, y) court positions using a 2D constant-velocity Kalman filter.
+
+    Returns the filtered (smoothed) position at each time step.
+    Uses state [x, y, vx, vy] with dt=1 frame.
+    """
+    if not positions:
+        return []
+    n = len(positions)
+    pos_arr = np.array(positions, dtype=float)
+    dt = 1.0
+
+    # State: [x, y, vx, vy]
+    F = np.array(
+        [
+            [1, 0, dt, 0],
+            [0, 1, 0, dt],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+        ],
+        dtype=float,
+    )
+    H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=float)
+    Q = np.eye(4) * process_noise
+    Q[2:, 2:] *= 0.5  # velocity process noise
+    R = np.eye(2) * measurement_noise
+
+    x = np.zeros(4)
+    x[:2] = pos_arr[0]
+    P = np.eye(4) * 10.0
+
+    smoothed: list[tuple[float, float]] = []
+    for k in range(n):
+        # Predict
+        x = F @ x
+        P = F @ P @ F.T + Q
+        # Update
+        z = pos_arr[k]
+        y = z - H @ x
+        S = H @ P @ H.T + R
+        K = P @ H.T @ np.linalg.inv(S)
+        x = x + K @ y
+        P = (np.eye(4) - K @ H) @ P
+        smoothed.append((float(x[0]), float(x[1])))
+    return smoothed
 
 
 # Node layout: S=0, T=1, d_i_in=2+2i, d_i_out=2+2i+1, oof_i=2+2*N+i, start_out, end_out
@@ -231,17 +282,22 @@ class FlowTracker:
 
         tracks: list[list[int]] | None = None
         lookback = self.lookback
+        past_positions: dict[int, tuple[float, float]] | None = None
+        future_positions: dict[int, tuple[float, float]] | None = None
         for pass_idx in range(self.n_passes):
             past_embs: dict[int, np.ndarray] | None = None
             future_embs: dict[int, np.ndarray] | None = None
             past_color_embs: dict[int, np.ndarray] | None = None
             future_color_embs: dict[int, np.ndarray] | None = None
             if tracks is not None:
-                past_embs, future_embs, past_color_embs, future_color_embs = self._compute_tracklet_embeddings(
-                    tracks,
-                    det_list,
-                    lookback,
-                )
+                (
+                    past_embs,
+                    future_embs,
+                    past_color_embs,
+                    future_color_embs,
+                    past_positions,
+                    future_positions,
+                ) = self._compute_tracklet_embeddings(tracks, det_list, lookback)
                 lookback *= 2
                 self.w_app *= 0.8
 
@@ -259,6 +315,8 @@ class FlowTracker:
                 future_color_embs,
                 pass_idx,
                 prev_tracks=tracks,
+                past_positions=past_positions,
+                future_positions=future_positions,
             )
 
         assert tracks is not None
@@ -287,25 +345,30 @@ class FlowTracker:
         dict[int, np.ndarray],
         dict[int, np.ndarray],
         dict[int, np.ndarray],
+        dict[int, tuple[float, float]],
+        dict[int, tuple[float, float]],
     ]:
-        """Directional mean embeddings (reid + color) for each tracked detection.
+        """Directional mean embeddings (reid + color) and Kalman-smoothed positions for each tracked detection.
 
         Returns
         -------
-        (past_embs, future_embs, past_color_embs, future_color_embs)
-            Reid and color embeddings averaged over a lookback window in
-            each direction along the track.
+        (past_embs, future_embs, past_color_embs, future_color_embs, past_positions, future_positions)
+            Reid and color embeddings averaged over a lookback window in each direction.
+            past_positions / future_positions: Kalman-smoothed court (x, y) for spatial cost in later passes.
         """
         past_embs: dict[int, np.ndarray] = {}
         future_embs: dict[int, np.ndarray] = {}
         past_color_embs: dict[int, np.ndarray] = {}
         future_color_embs: dict[int, np.ndarray] = {}
+        past_positions: dict[int, tuple[float, float]] = {}
+        future_positions: dict[int, tuple[float, float]] = {}
 
         for track in tracks:
             for pos, det_idx in enumerate(track):
                 past_start = max(0, pos - lookback)
                 past_reid: list[np.ndarray] = []
                 past_color: list[np.ndarray] = []
+                past_xy: list[tuple[float, float]] = []
                 for s_idx in track[past_start : pos + 1]:
                     player = det_list[s_idx][1]
                     emb = player.reid_embedding if player.reid_embedding is not None else player.embedding
@@ -313,14 +376,20 @@ class FlowTracker:
                         past_reid.append(emb)
                     if player.embedding is not None:
                         past_color.append(player.embedding)
+                    if player.court_position is not None:
+                        past_xy.append(player.court_position)
                 if past_reid:
                     past_embs[det_idx] = np.mean(past_reid, axis=0)
                 if past_color:
                     past_color_embs[det_idx] = np.mean(past_color, axis=0)
+                if past_xy:
+                    smoothed = _kalman_smooth_positions(past_xy)
+                    past_positions[det_idx] = smoothed[-1]
 
                 future_end = min(len(track), pos + lookback + 1)
                 future_reid: list[np.ndarray] = []
                 future_color: list[np.ndarray] = []
+                future_xy: list[tuple[float, float]] = []
                 for s_idx in track[pos:future_end]:
                     player = det_list[s_idx][1]
                     emb = player.reid_embedding if player.reid_embedding is not None else player.embedding
@@ -328,12 +397,24 @@ class FlowTracker:
                         future_reid.append(emb)
                     if player.embedding is not None:
                         future_color.append(player.embedding)
+                    if player.court_position is not None:
+                        future_xy.append(player.court_position)
                 if future_reid:
                     future_embs[det_idx] = np.mean(future_reid, axis=0)
                 if future_color:
                     future_color_embs[det_idx] = np.mean(future_color, axis=0)
+                if future_xy:
+                    smoothed = _kalman_smooth_positions(future_xy)
+                    future_positions[det_idx] = smoothed[0]
 
-        return past_embs, future_embs, past_color_embs, future_color_embs
+        return (
+            past_embs,
+            future_embs,
+            past_color_embs,
+            future_color_embs,
+            past_positions,
+            future_positions,
+        )
 
     @staticmethod
     def _color_cost(player_i, player_j) -> float:
@@ -521,6 +602,8 @@ class FlowTracker:
         future_color_embs: dict[int, np.ndarray] | None,
         pass_idx: int,
         prev_tracks: list[list[int]] | None = None,
+        past_positions: dict[int, tuple[float, float]] | None = None,
+        future_positions: dict[int, tuple[float, float]] | None = None,
     ) -> list[list[int]]:
         """Build the flow graph, solve MCMF, and return extracted tracks."""
 
@@ -581,7 +664,15 @@ class FlowTracker:
                         player_i = det_list[i][1]
                         for j in frame_to_dets[frame_j]:
                             player_j = det_list[j][1]
-                            cost = self._link_cost(player_i, player_j, gap)
+                            cost = self._link_cost(
+                                player_i,
+                                player_j,
+                                gap,
+                                past_positions=past_positions,
+                                future_positions=future_positions,
+                                det_i=i,
+                                det_j=j,
+                            )
                             if cost is not None:
                                 if past_embs is not None and future_embs is not None:
                                     ext = self._extended_cost(
@@ -703,14 +794,44 @@ class FlowTracker:
             return None
         return cosine_dist(emb_i, emb_j)
 
-    def _link_cost(self, player_i, player_j, frame_gap: int, *, skip_penalty: bool = True) -> float | None:
-        """Cost of linking two detections. Exponential spatial cost discourages teleportation."""
+    def _link_cost(
+        self,
+        player_i,
+        player_j,
+        frame_gap: int,
+        *,
+        skip_penalty: bool = True,
+        past_positions: dict[int, tuple[float, float]] | None = None,
+        future_positions: dict[int, tuple[float, float]] | None = None,
+        det_i: int | None = None,
+        det_j: int | None = None,
+    ) -> float | None:
+        """Cost of linking two detections. Exponential spatial cost discourages teleportation.
+
+        In later passes, uses Kalman-smoothed court positions when available for more stable spatial cost.
+        """
         # --- Spatial (exponential: no gate, but teleportation is heavily penalised) ---
+        # Prefer court coordinates (meters) when available; fallback to bbox (pixels)
+        # In later passes, use Kalman-smoothed positions for stability
         spatial_cost = 0.5
+        pos_i = None
+        pos_j = None
+        if past_positions is not None and future_positions is not None and det_i is not None and det_j is not None:
+            pos_i = past_positions.get(det_i)
+            pos_j = future_positions.get(det_j)
+        if pos_i is None:
+            pos_i = player_i.court_position
+        if pos_j is None:
+            pos_j = player_j.court_position
         bbox_i = player_i.bbox
         bbox_j = player_j.bbox
 
-        if bbox_i and bbox_j and len(bbox_i) >= 4 and len(bbox_j) >= 4:
+        if pos_i is not None and pos_j is not None:
+            m_dist = court_position_distance(pos_i, pos_j)
+            scale = (self.max_speed / max(self.fps, 1)) * (max(1, frame_gap) ** 0.5)
+            x = min(m_dist / max(scale, 1e-6), 15.0)  # clip to avoid overflow
+            spatial_cost = np.exp(x) - 1.0
+        elif bbox_i and bbox_j and len(bbox_i) >= 4 and len(bbox_j) >= 4:
             px_dist = bbox_bottom_mid_distance(bbox_i, bbox_j)
             scale = self.bbox_scale * (max(1, frame_gap) ** 0.5)
             x = min(px_dist / max(scale, 1e-6), 15.0)  # clip to avoid overflow

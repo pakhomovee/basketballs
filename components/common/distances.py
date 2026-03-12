@@ -24,6 +24,11 @@ def bbox_bottom_mid_distance(a, b) -> float:
     return float(np.hypot(pa[0] - pb[0], pa[1] - pb[1]))
 
 
+def court_position_distance(pos_a: tuple[float, float], pos_b: tuple[float, float]) -> float:
+    """Euclidean distance between two court positions (meters)."""
+    return float(np.hypot(pos_a[0] - pos_b[0], pos_a[1] - pos_b[1]))
+
+
 def bbox_iou(a, b) -> float:
     """IoU of two ``[x1, y1, x2, y2]`` boxes."""
     a, b = np.asarray(a, dtype=float).ravel()[:4], np.asarray(b, dtype=float).ravel()[:4]
