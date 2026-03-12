@@ -101,7 +101,7 @@ def main(
             )
 
             court_detector = CourtDetector()
-            court_detector.run(video_path, players_detections)
+            court_detector.run(video_path, players_detections, court_type)
             _extract_embeddings(video_path, players_detections, seg_model, "../models/reid_model.pth")
             if save_cache:
                 save_detections_cache(
@@ -130,7 +130,7 @@ def main(
         detector = MockDetector(gt_path, normalized=True)
         players_detections = detector.detect(video_path)
         court_detector = CourtDetector()
-        court_detector.run(video_path, players_detections)
+        court_detector.run(video_path, players_detections, court_type)
         _extract_embeddings(video_path, players_detections, seg_model, "../models/reid_model.pth")
 
     frame_width = _get_video_frame_width(video_path)

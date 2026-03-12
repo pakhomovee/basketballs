@@ -1,4 +1,6 @@
 from common.classes import CourtType
+from collections import defaultdict
+
 
 FIBA_COURT_POINTS = [
     (-14, 7.5, 0),
@@ -32,8 +34,8 @@ FIBA_COURT_POINTS = [
     (14 - 3, -7.5 + 0.9, 28),
     (-14 + 8.33, 7.5, 29),
     (-14 + 8.33, -7.5, 30),
-    (14 - 8.33, 7.62, 31),
-    (14 - 8.33, -7.62, 32),
+    (14 - 8.33, 7.5, 31),
+    (14 - 8.33, -7.5, 32),
 ]
 
 NBA_COURT_POINTS = [
@@ -177,3 +179,18 @@ COURT_TYPE_TO_COURT_POINTS = {
     CourtType.FIBA: FIBA_COURT_POINTS,
     CourtType.NBA: NBA_COURT_POINTS,
 }
+
+COURT_TYPE_TO_COURT_SIZE = {
+    CourtType.FIBA: (28, 15),
+    CourtType.NBA: (28.65, 15.24),
+}
+
+
+class CourtConstants:
+    def __init__(self, court_type: CourtType):
+        self.court_type = court_type
+        self.court_points = COURT_TYPE_TO_COURT_POINTS[court_type]
+        self.court_size = COURT_TYPE_TO_COURT_SIZE[court_type]
+        self.cls_to_points = defaultdict(list)
+        for x, y, c in self.court_points:
+            self.cls_to_points[c].append((x, y))

@@ -10,7 +10,13 @@ import matplotlib
 import numpy as np
 from ultralytics import YOLO
 
-from court_detector.court_constants import SMALL_COURT_POINTS, FIBA_COURT_POINTS, MAPPING_ROBOFLOW_COURT_DETECTION
+from common.classes import CourtType
+from court_detector.court_constants import (
+    SMALL_COURT_POINTS,
+    FIBA_COURT_POINTS,
+    MAPPING_ROBOFLOW_COURT_DETECTION,
+    CourtConstants,
+)
 from court_detector.court_detector import CourtDetector, project_homography
 from court_detector.prepare_dataset import SPORCENTER_GOOD_SEQS
 import json
@@ -446,79 +452,133 @@ def run_roboflow(args):
 
 
 def run_video(args):
-    detector = CourtDetector(str(args.model))
-    detector.set_prediction_confedence(DETECTION_CONF)
+    # Detector and court constants
+    detector = CourtDetector(str(args.model), conf=DETECTION_CONF)
+    court_constants = CourtConstants(CourtType.NBA)
+
+    # Pre-compute homographies, keypoint detections and per-frame losses
+    # homographies, frames_sizes, keypoints_detections, losses = detector.extract_homographies_from_video(
+    #     str(args.video), court_constants
+    # )
+
+    homographies, frames_sizes, keypoints_detections, losses = detector.extract_homographies_from_video(
+        str(args.video), court_constants
+    )
+    # losses = None
+
+    # Open video again for visualization
     cap = cv2.VideoCapture(str(args.video))
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {args.video}")
 
-    # num_classes = int(max(p[2] for p in SMALL_COURT_POINTS)) + 1
-    cmap = plt.colormaps.get_cmap("tab20")
-    fig, ax = plt.subplots(figsize=(9, 5))
+    # Load court model image (NBA court)
+    court_img_path = Path(__file__).parent / "nba.png"
+    court_bgr = cv2.imread(str(court_img_path))
+    if court_bgr is None:
+        raise RuntimeError(f"Cannot read court image: {court_img_path}")
+    ch, cw = court_bgr.shape[:2]
 
-    def show_next():
+    alpha = 0.5  # transparency for court overlay
+    colors = [
+        (0, 0, 255),
+        (0, 255, 0),
+        (255, 0, 0),
+        (0, 255, 255),
+        (255, 0, 255),
+        (255, 255, 0),
+    ]
+
+    frame_idx = 0
+    window_name = f"Court visualization - {args.video.name}"
+
+    while True:
+        # Clamp frame index to valid range
+        if frame_idx < 0:
+            frame_idx = 0
+        if frame_idx >= len(homographies):
+            frame_idx = len(homographies) - 1
+
+        # Seek to the desired frame and read it
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ret, frame_bgr = cap.read()
         if not ret:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            ret, frame_bgr = cap.read()
-            if not ret:
-                return
-        # w = frame_bgr.shape[1]
-        # frame_bgr = frame_bgr[:, w // 2:]
-        h, w = frame_bgr.shape[:2]
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            break
 
-        pred_centers, pred_cls, H = detector.predict_court_homography(frame_rgb)
+        H = homographies[frame_idx]
+        frame_w, frame_h = frames_sizes[frame_idx]
+        pred_centers, pred_cls = keypoints_detections[frame_idx]
 
-        ax.clear()
-        ax.imshow(frame_rgb)
-        for cls_id in np.unique(pred_cls) if len(pred_cls) else []:
-            mask = pred_cls == cls_id
-            centers = pred_centers[mask]
-            ax.scatter(
-                centers[:, 0],
-                centers[:, 1],
-                facecolors="none",
-                edgecolors=cmap(cls_id),
-                s=90,
-                marker="o",
-                linewidths=2,
-                label=f"pred type {cls_id}",
-            )
-            for x, y in centers:
-                ax.text(
-                    x + 8,
-                    y - 8,
-                    str(cls_id),
-                    color=cmap(cls_id),
-                    fontsize=12,
-                    weight="bold",
-                    bbox=dict(
-                        boxstyle="round,pad=0.1",
-                        facecolor="white",
-                        edgecolor=cmap(cls_id),
-                        alpha=0.8,
-                    ),
-                )
+        # Prepare base frame
+        frame_vis = frame_bgr.copy()
+
         if H is not None:
-            for arrow in [np.array([(0, 0), (2, 0)]), np.array([(0, 0), (0, 2)])]:
-                arrow = project_homography(arrow, np.linalg.inv(H))
-                arrow[1] -= arrow[0]
-                ax.arrow(arrow[0][0], arrow[0][1], arrow[1][0], arrow[1][1], width=6)
-        ax.set_title(f"{args.video.name}")
-        ax.axis("off")
-        handles, labels = ax.get_legend_handles_labels()
-        if handles:
-            ax.legend()
-        fig.canvas.draw_idle()
+            # Map court image corners (center at (0,0), edges at +/-0.5) to frame using inverse homography
+            H_inv = np.linalg.inv(H)
+            court_corners_norm = np.array(
+                [
+                    [-0.5, -0.5],  # left-bottom
+                    [0.5, -0.5],  # right-bottom
+                    [0.5, 0.5],  # right-top
+                    [-0.5, 0.5],  # left-top
+                ],
+                dtype=np.float32,
+            )
+            frame_corners_norm = project_homography(court_corners_norm, H_inv)
+            dst_pts = frame_corners_norm * np.array([[frame_w, frame_h]], dtype=np.float32)
 
-    def on_key(event):
-        if event.key == " ":
-            show_next()
+            src_pts = np.array(
+                [
+                    [0.0, 0.0],
+                    [float(cw), 0.0],
+                    [float(cw), float(ch)],
+                    [0.0, float(ch)],
+                ],
+                dtype=np.float32,
+            )
 
-    fig.canvas.mpl_connect("key_press_event", on_key)
-    show_next()
-    plt.show()
+            M = cv2.getPerspectiveTransform(src_pts, dst_pts.astype(np.float32))
+            warped_court = cv2.warpPerspective(court_bgr, M, (frame_w, frame_h))
+
+            # Alpha blend court and frame (both in BGR)
+            frame_vis = (alpha * warped_court + (1.0 - alpha) * frame_vis).astype(np.uint8)
+
+        # Draw keypoint detections (small circles with class labels)
+        if pred_centers is not None and len(pred_centers):
+            for (x, y), cls_id in zip(pred_centers, pred_cls):
+                c = colors[int(cls_id) % len(colors)]
+                center = (int(round(x)), int(round(y)))
+                cv2.circle(frame_vis, center, 4, c, -1)
+                cv2.putText(
+                    frame_vis,
+                    str(int(cls_id)),
+                    (center[0] + 5, center[1] - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    c,
+                    1,
+                    cv2.LINE_AA,
+                )
+
+        # Show frame and print current loss
+        cv2.imshow(window_name, frame_vis)
+        if losses is not None and len(losses) > frame_idx:
+            print(f"Frame {frame_idx}: loss = {float(losses[frame_idx]):.4f}")
+
+        # Left/right arrows to move backward/forward, q/ESC to exit
+        key = cv2.waitKey(0) & 0xFF
+        if key == 27 or key == ord("q"):
+            break
+        # OpenCV arrow key codes: left=81, up=82, right=83, down=84 (on most platforms)
+        if key == 81:  # left arrow
+            frame_idx -= 1
+        elif key == 83:  # right arrow
+            frame_idx += 1
+        else:
+            # Any other key: stay on the same frame
+            continue
+
+    cap.release()
+    cv2.destroyWindow(window_name)
 
 
 if __name__ == "__main__":
