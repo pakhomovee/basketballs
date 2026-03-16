@@ -461,7 +461,7 @@ def run_video(args):
     #     str(args.video), court_constants
     # )
 
-    homographies, frames_sizes, keypoints_detections, losses = detector.extract_homographies_from_video(
+    homographies, frames_sizes, keypoints_detections, losses = detector.extract_homographies_from_video_v2(
         str(args.video), court_constants
     )
     # losses = None
