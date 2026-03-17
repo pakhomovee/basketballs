@@ -74,7 +74,7 @@ def main(
     """
     get_logger().clear()
     if not os.path.exists("../models/court_detection_model.pt"):
-        download("https://disk.yandex.ru/d/o7lVmeYl0xmn4g", "court_detection_model.pt", "../models")
+        download("https://disk.yandex.ru/d/VRabl680FfKBog", "court_detection_model.pt", "../models")
     if not os.path.exists("../models/best-4.pt"):
         download("https://disk.yandex.ru/d/MAGAbYxRFEvX6w", "best-4.pt", "../models")
     if not os.path.exists("../models/parseq_flex.ckpt"):
