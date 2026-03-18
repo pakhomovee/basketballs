@@ -31,25 +31,29 @@ class ReIDModel(nn.Module):
 
     def __init__(self, num_classes: int, feature_dim: int = 2048, pretrained: bool = True):
         super().__init__()
-        backbone = models.resnet50(weights=models.ResNet50_Weights.DEFAULT if pretrained else None)
-        # Drop the original FC layer; keep everything up to avgpool
-        self.backbone = nn.Sequential(*list(backbone.children())[:-2])
+        self.backbone = self._build_backbone(pretrained=pretrained)
         self.gap = nn.AdaptiveAvgPool2d(1)
 
         self.bnneck = BNNeck(feature_dim)
         self.classifier = nn.Linear(feature_dim, num_classes, bias=False)
         nn.init.normal_(self.classifier.weight, std=0.001)
 
-    def forward(self, x: torch.Tensor):
-        feat_map = self.backbone(x)  # (B, 2048, H', W')
-        global_feat = self.gap(feat_map)  # (B, 2048, 1, 1)
-        global_feat = global_feat.flatten(1)  # (B, 2048)
+    @staticmethod
+    def _build_backbone(*, pretrained: bool) -> nn.Module:
+        weights = models.ResNet50_Weights.DEFAULT if pretrained else None
+        backbone = models.resnet50(weights=weights)
+        return nn.Sequential(*list(backbone.children())[:-2])
 
+    def _global_features(self, x: torch.Tensor) -> torch.Tensor:
+        feat_map = self.backbone(x)
+        return self.gap(feat_map).flatten(1)
+
+    def forward(self, x: torch.Tensor):
+        global_feat = self._global_features(x)
         bn_feat = self.bnneck(global_feat)
         if self.training:
             logits = self.classifier(bn_feat)
             return global_feat, logits
-        # Inference: return L2-normalised BN features
         return F.normalize(bn_feat, p=2, dim=1)
 
     @torch.no_grad()
