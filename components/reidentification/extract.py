@@ -6,13 +6,8 @@ import cv2
 import numpy as np
 import torch
 
-# from .dataset import INPUT_SIZE, IMAGENET_MEAN, IMAGENET_STD
+from .dataset import preprocess_reid_image
 from .model import ReIDModel
-
-INPUT_SIZE = (256, 128)
-
-IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
 class ReIDFeatureExtractor:
@@ -30,16 +25,9 @@ class ReIDFeatureExtractor:
     @torch.no_grad()
     def extract_batch(self, crops: list[np.ndarray]) -> list[np.ndarray]:
         """Extract features for a list of BGR crops. Returns list of 2048-d numpy vectors."""
-        tensors = []
-        for crop in crops:
-            img = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-            img = cv2.resize(img, (INPUT_SIZE[1], INPUT_SIZE[0]))
-            img = img.astype(np.float32) / 255.0
-            img = (img - np.array(IMAGENET_MEAN)) / np.array(IMAGENET_STD)
-            tensors.append(torch.from_numpy(img).permute(2, 0, 1).float())
-
+        tensors = [preprocess_reid_image(crop) for crop in crops]
         batch = torch.stack(tensors).to(self.device)
-        features = self.model(batch)  # (N, 2048) L2-normalised
+        features = self.model.extract_features(batch)
         return [f.cpu().numpy() for f in features]
 
 
@@ -82,14 +70,15 @@ def extract_reid_embeddings(
             batch_players.append(player)
 
             if len(batch_crops) >= batch_size:
-                feats = extractor.extract_batch(batch_crops)
-                for p, f in zip(batch_players, feats):
-                    p.reid_embedding = f
-                batch_crops, batch_players = [], []
+                features = extractor.extract_batch(batch_crops)
+                for player, feature in zip(batch_players, features):
+                    player.reid_embedding = feature
+                batch_crops = []
+                batch_players = []
 
     if batch_crops:
-        feats = extractor.extract_batch(batch_crops)
-        for p, f in zip(batch_players, feats):
-            p.reid_embedding = f
+        features = extractor.extract_batch(batch_crops)
+        for player, feature in zip(batch_players, features):
+            player.reid_embedding = feature
 
     cap.release()
