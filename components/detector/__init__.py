@@ -1,5 +1,6 @@
 from detector.detector import (
     Detector,
+    get_frame_players_detections,
     get_video_players_detections,
     get_video_ball_detections,
     get_video_rim_detections,
@@ -18,6 +19,7 @@ from detector.enrich import (
 
 __all__ = [
     "Detector",
+    "get_frame_players_detections",
     "get_video_players_detections",
     "get_video_ball_detections",
     "get_video_rim_detections",
