@@ -36,9 +36,10 @@ class CourtDetector:
     def __init__(
         self,
         model_path: str | Path = Path(__file__).parent.parent.parent / "models" / "court_detection_model.pt",
+        model_pretrained=None,
         conf=0.25,
     ):
-        self.model = YOLO(model_path)
+        self.model = YOLO(model_path) if model_pretrained is None else YOLO(model_pretrained)
         self.model_path = model_path
         self.conf = conf
 
@@ -47,7 +48,7 @@ class CourtDetector:
         dataset_path: Path = Path(__file__).parent / "yolo_combined_data",
         need_prepare_dataset: bool = False,
         epochs: int = 30,
-        batch: int = 16,
+        batch: int = 8,
         imgsz: int = 640,
         save=True,
         lr0=0.01,
@@ -80,7 +81,7 @@ class CourtDetector:
             fliplr=0,
             save_dir=str(save_dir),
         )
-        best_model_path = Path(__file__).parent / "runs" / "detect" / project / model_name / "weights" / "best.pt"
+        best_model_path = str(save_dir / "weights" / "best.pt")
         self.model = YOLO(best_model_path)
         if save:
             self.model.save(self.model_path)
@@ -691,7 +692,7 @@ class CourtDetector:
 
 def main():
     detector = CourtDetector()
-    detector.train(epochs=5, lr0=0.01, lrf=0.001, need_prepare_dataset=True)
+    detector.train(epochs=25, lr0=0.001, lrf=0.001)
 
 
 if __name__ == "__main__":
