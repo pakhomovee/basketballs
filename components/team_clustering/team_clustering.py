@@ -8,17 +8,21 @@ from sklearn.cluster import KMeans
 
 from common.classes.player import PlayersDetections
 
-try:
-    import umap
-except ImportError:
-    umap = None
+
+def _normalize(vector: np.ndarray) -> np.ndarray:
+    norm = np.linalg.norm(vector)
+    return vector / norm if norm > 0 else vector
+
+
+def _pool_track_embeddings(embeddings: list[np.ndarray]) -> np.ndarray:
+    return _normalize(np.median(np.asarray(embeddings, dtype=np.float32), axis=0))
 
 
 def _cluster_track_embeddings(
     track_embeddings: dict[Any, list[np.ndarray]],
     n_clusters: int,
 ) -> dict[Any, int]:
-    """Shared clustering logic: mean embedding per track, then KMeans.
+    """Shared clustering logic: robust pooled embedding per track, then KMeans.
 
     Args:
         track_embeddings: Map from track key (e.g. player_id or track_idx) to
@@ -34,7 +38,7 @@ def _cluster_track_embeddings(
         if not feats:
             continue
         keys.append(key)
-        features.append(np.mean(feats, axis=0))
+        features.append(_pool_track_embeddings(feats))
 
     features_arr = np.array(features)
     if len(features_arr) < n_clusters:
@@ -57,7 +61,7 @@ class TeamClustering:
     1. **Detection dict** (requires player.player_id set)::
 
         tc = TeamClustering()
-        tc.run(detections, k_frames=30)
+        tc.run(detections)
         # Each Player now has .team_id set
 
     2. **Track indices + det list** (for use inside tracking loops)::
@@ -68,24 +72,18 @@ class TeamClustering:
 
     def __init__(self, n_clusters: int = 2):
         self.n_clusters = n_clusters
-        self.sample_detections: list[tuple] = []
 
     def run(
         self,
         detections: PlayersDetections,
-        k_frames: int = 1,
     ) -> None:
         """
         Run clustering using precomputed player.embedding and enrich with team_id.
 
         Args:
-            detections:  Per-frame player detections (with player.embedding set).
-            k_frames:    Sample every k-th frame (1 = every frame).
+            detections: Per-frame player detections (with player.embedding set).
         """
-        track_embeddings = self._collect_embeddings_from_detections(
-            detections,
-            k_frames,
-        )
+        track_embeddings = self._collect_embeddings_from_detections(detections)
         clusters = _cluster_track_embeddings(track_embeddings, self.n_clusters)
 
         if not clusters:
@@ -181,11 +179,9 @@ class TeamClustering:
     def _collect_embeddings_from_detections(
         self,
         detections: PlayersDetections,
-        k_frames: int,
     ) -> dict[int, list[np.ndarray]]:
         """Collect embeddings grouped by player_id (from detections dict)."""
         tracks: dict[int, list[np.ndarray]] = collections.defaultdict(list)
-        self.sample_detections = []
 
         for frame_id in sorted(detections.keys()):
             for player in detections[frame_id]:
