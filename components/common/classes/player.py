@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from common.classes.number import Number
+from common.classes.skeleton import Skeleton
 
 import numpy as np
 
@@ -23,6 +24,7 @@ class Player:
     confidence: float | None = None
 
     number: Number | None = None
+    skeleton: Skeleton | None = None
 
     # Enriched by embedding extraction (mask-based color histograms, for team clustering)
     embedding: np.ndarray | None = None
