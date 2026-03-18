@@ -3,8 +3,11 @@ from detector import (
     Detector,
     get_video_players_detections,
     get_video_ball_detections,
+    get_video_rim_detections,
     get_video_referee_detections,
     get_frame_number_detections,
+    get_frame_pose_detections,
+    match_poses_to_players,
     match_numbers_to_players,
 )
 from detector.number_recognizer_parseq import recognize_numbers_in_frame as recognize_numbers_parseq
@@ -13,6 +16,57 @@ import cv2
 import numpy as np
 from skimage.feature import match_template
 from tqdm.auto import tqdm
+
+
+def _draw_skeleton(
+    frame: np.ndarray,
+    keypoints: np.ndarray,
+    *,
+    keypoint_color: tuple[int, int, int] = (0, 255, 0),
+    limb_color: tuple[int, int, int] = (255, 0, 0),
+    radius: int = 3,
+    thickness: int = 2,
+    conf_threshold: float = 0.1,
+) -> None:
+    """Draw keypoints (K,3) and a simple skeleton on the frame."""
+    if keypoints is None or keypoints.size == 0:
+        return
+    num_kp = keypoints.shape[0]
+
+    for idx in range(num_kp):
+        x, y, c = keypoints[idx]
+        if c < conf_threshold:
+            continue
+        cv2.circle(frame, (int(x), int(y)), radius, keypoint_color, -1, lineType=cv2.LINE_AA)
+
+    # COCO-style subset (works for common 17-kp layouts)
+    skeleton = [
+        (5, 6),  # shoulders
+        (5, 7),
+        (7, 9),  # left arm
+        (6, 8),
+        (8, 10),  # right arm
+        (11, 12),  # hips
+        (11, 13),
+        (13, 15),  # left leg
+        (12, 14),
+        (14, 16),  # right leg
+    ]
+    for i, j in skeleton:
+        if i >= num_kp or j >= num_kp:
+            continue
+        x1, y1, c1 = keypoints[i]
+        x2, y2, c2 = keypoints[j]
+        if c1 < conf_threshold or c2 < conf_threshold:
+            continue
+        cv2.line(
+            frame,
+            (int(x1), int(y1)),
+            (int(x2), int(y2)),
+            limb_color,
+            thickness,
+            lineType=cv2.LINE_AA,
+        )
 
 
 def video_with_ball_bbox_yolo(
@@ -68,6 +122,7 @@ def video_with_ball_bbox_yolo(
     player_detections = get_video_players_detections(detections, conf_threshold=0.1)
     ball_detections = get_video_ball_detections(detections)
     referee_detections = get_video_referee_detections(detections, conf_threshold=0.1)
+    rim_detections = get_video_rim_detections(detections, conf_threshold=0.1)
 
     # Directory for frames with player detections > 10 or ball detections > 1
     many_players_dir = Path(input_path).parent / f"{Path(input_path).stem}_frames_many_players"
@@ -90,6 +145,7 @@ def video_with_ball_bbox_yolo(
             players_in_frame = player_detections.get(i, [])
             balls_in_frame = ball_detections.get(i, [])
             referees_in_frame = referee_detections.get(i, [])
+            rims_in_frame = rim_detections.get(i, [])
             numbers_in_frame = get_frame_number_detections(detections[i], frame=None, conf_threshold=0.25)
             recognize_numbers_parseq(frame, numbers_in_frame, padding=5, ocr_conf_threshold=0.999)
             match_numbers_to_players(
@@ -97,6 +153,9 @@ def video_with_ball_bbox_yolo(
                 {i: numbers_in_frame},
                 {i: referees_in_frame},
             )
+            # Pose (YOLO-pose) -> match to our players -> store in player.skeleton
+            poses_in_frame = get_frame_pose_detections(frame, conf_threshold=0.15)
+            match_poses_to_players(players_in_frame, poses_in_frame, iou_threshold=0.3)
 
             for ball_detection in balls_in_frame:
                 detection = ball_detection.bbox
@@ -114,6 +173,8 @@ def video_with_ball_bbox_yolo(
                 has_recognized_num = player_detection.number is not None and player_detection.number.num is not None
                 color = color_player_with_number if has_recognized_num else color_player
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+                if player_detection.skeleton is not None and player_detection.skeleton.keypoints is not None:
+                    _draw_skeleton(frame, player_detection.skeleton.keypoints)
                 if has_recognized_num:
                     label = str(player_detection.number.num)
                 elif player_detection.confidence is not None:
@@ -134,6 +195,11 @@ def video_with_ball_bbox_yolo(
                     (tw, th), _ = cv2.getTextSize(label, font, font_scale, font_thickness)
                     cv2.rectangle(frame, (x1, y1 - th - 4), (x1 + tw + 4, y1), color_referee, -1)
                     cv2.putText(frame, label, (x1 + 2, y1 - 2), font, font_scale, (0, 0, 0), font_thickness)
+
+            # Draw rim bboxes (class_id 10) from raw detections
+            for rim_det in rims_in_frame:
+                x1, y1, x2, y2 = rim_det.get_bbox()
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), thickness)
 
             num_players = len(players_in_frame)
             num_balls = len(balls_in_frame)

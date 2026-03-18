@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 
 from common.logger import get_logger
+from visualization.skeleton import draw_skeleton
 
 # Logs panel dimensions
 _LOGS_PANEL_HEIGHT = 120
@@ -159,6 +160,9 @@ def make_side_by_side_video(
                         x1, y1, x2, y2 = map(int, player.bbox)
                         color = _TEAM_COLORS.get(player.team_id, _TEAM_UNKNOWN_COLOR)
                         cv2.rectangle(frame_top, (x1, y1), (x2, y2), color, 2)
+                        # Draw skeleton if available
+                        if getattr(player, "skeleton", None) is not None:
+                            draw_skeleton(frame_top, player.skeleton)
                         label = str(player.player_id)
                         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
                         cv2.rectangle(frame_top, (x1, y1 - th - 4), (x1 + tw + 2, y1), color, -1)

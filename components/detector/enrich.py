@@ -1,0 +1,169 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import cv2
+from tqdm import tqdm
+
+from common.classes.detections import VideoDetections
+from common.classes.number import NumberDetections
+from common.classes.player import PlayersDetections, Player
+from common.classes.referee import RefereesDetections
+
+from common.classes.skeleton import Skeleton
+from common.distances import bbox_iou
+
+from detector.detector import (
+    get_frame_number_detections,
+    get_frame_pose_detections,
+    get_video_players_detections,
+    get_video_referee_detections,
+    PoseDetection,
+)
+
+
+def _bbox_inside(inner: list[int], outer: list[int]) -> bool:
+    """True if inner bbox [x1,y1,x2,y2] is entirely inside outer bbox."""
+    if len(inner) < 4 or len(outer) < 4:
+        return False
+    return outer[0] <= inner[0] and outer[1] <= inner[1] and inner[2] <= outer[2] and inner[3] <= outer[3]
+
+
+def match_numbers_to_players(
+    players_detections: PlayersDetections,
+    number_detections: NumberDetections,
+    referees_detections: RefereesDetections,
+) -> None:
+    """
+    For each number, assign it to a player only if exactly one player bbox contains it.
+    If the number lies inside several players, it is not assigned to anyone.
+    If the number is inside any referee bbox, it is not assigned to any player.
+    Modifies players in place.
+    """
+    for frame_id, numbers in number_detections.items():
+        players = players_detections.get(frame_id, [])
+        referees = referees_detections.get(frame_id, [])
+        for player in players:
+            player.number = None
+        for number in numbers:
+            if any(_bbox_inside(number.bbox, r.bbox) for r in referees):
+                continue
+            containing: list[Player] = []
+            for player in players:
+                if _bbox_inside(number.bbox, player.bbox):
+                    containing.append(player)
+            if not containing:
+                continue
+            if len(containing) > 1:
+                continue
+            p = containing[0]
+            if p.number is not None:
+                continue
+            p.number = number
+
+
+def match_poses_to_players(
+    players: list[Player],
+    poses: list[PoseDetection],
+    *,
+    iou_threshold: float = 0.3,
+) -> None:
+    """
+    Match pose detections to Player objects by IoU of bboxes and set player.skeleton.
+    """
+    for p in players:
+        p.skeleton = None
+
+    for player in players:
+        if not player.bbox:
+            continue
+        best_iou = 0.0
+        best_pose: PoseDetection | None = None
+        for pose in poses:
+            iou = bbox_iou(player.bbox, pose.bbox)
+            if iou > best_iou:
+                best_iou = iou
+                best_pose = pose
+        if best_pose is not None and best_iou >= iou_threshold:
+            player.skeleton = Skeleton(keypoints=best_pose.keypoints)
+
+
+def enrich_detections_with_numbers(
+    video_path: str,
+    video_detections: VideoDetections,
+    *,
+    player_conf_threshold: float = 0.1,
+    referee_conf_threshold: float = 0.25,
+    number_conf_threshold: float = 0.25,
+    ocr_conf_threshold: float = 0.999,
+    save_crops_dir: str | Path | None = None,
+) -> tuple[PlayersDetections, RefereesDetections, NumberDetections]:
+    """
+    Run number recognition on each frame and assign numbers to players.
+    Reads video frames, runs OCR on number bboxes via recognize_numbers_in_frame (inside
+    get_frame_number_detections), then match_numbers_to_players. Mutates and returns
+    players_detections with .number set where a number was assigned.
+    """
+    players_detections = get_video_players_detections(video_detections, conf_threshold=player_conf_threshold)
+    referees_detections = get_video_referee_detections(video_detections, conf_threshold=referee_conf_threshold)
+    number_detections: NumberDetections = {}
+    cap = cv2.VideoCapture(video_path)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    try:
+        idx = 0
+        for i in tqdm(range(frame_count), desc="Enrich numbers"):
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if idx == len(video_detections):
+                break
+            if video_detections[idx].frame_id != i:
+                continue
+
+            number_detections[i] = get_frame_number_detections(
+                video_detections[idx],
+                frame=frame,
+                conf_threshold=number_conf_threshold,
+                ocr_conf_threshold=ocr_conf_threshold,
+                save_crops_dir=save_crops_dir,
+            )
+            idx += 1
+    finally:
+        cap.release()
+    match_numbers_to_players(players_detections, number_detections, referees_detections)
+    return players_detections, referees_detections, number_detections
+
+
+def enrich_players_with_pose(
+    video_path: str,
+    players_detections: PlayersDetections,
+    *,
+    pose_model_path: str | Path | None = None,
+    pose_conf_threshold: float = 0.15,
+    match_iou_threshold: float = 0.3,
+) -> PlayersDetections:
+    """
+    Read video frames and enrich provided players_detections with pose skeletons.
+    Mutates Player objects in-place and also returns players_detections.
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open video: {video_path}")
+    try:
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        for frame_id in tqdm(range(frame_count), desc="Pose enrich", unit="frame"):
+            ret, frame = cap.read()
+            if not ret:
+                break
+            players_in_frame = players_detections.get(frame_id, [])
+            if not players_in_frame:
+                continue
+            poses = get_frame_pose_detections(frame, model_path=pose_model_path, conf_threshold=pose_conf_threshold)
+            match_poses_to_players(players_in_frame, poses, iou_threshold=match_iou_threshold)
+    finally:
+        cap.release()
+    return players_detections
+
+
+# Backwards/wording-friendly alias (optional)
+enrich_players_with_numbers = enrich_detections_with_numbers

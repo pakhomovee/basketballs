@@ -14,7 +14,7 @@ from reidentification import extract_reid_embeddings
 from common.classes import CourtType
 from common.logger import get_logger
 from common.utils.utils import download
-from detector import Detector, enrich_detections_with_numbers
+from detector import Detector, enrich_detections_with_numbers, enrich_players_with_pose
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -56,6 +56,7 @@ def main(
     court_type: CourtType = CourtType.NBA,
     k_frames: int = 30,
     output_both: str | None = None,
+    with_pose: bool = False,
     enable_smoothing: bool = True,
     no_cache: bool = False,
     no_cache_detector: bool = False,
@@ -99,6 +100,9 @@ def main(
             players_detections, referees_detections, numbers_detections = enrich_detections_with_numbers(
                 video_path, all_detections
             )
+
+            if with_pose:
+                enrich_players_with_pose(video_path, players_detections)
 
             court_detector = CourtDetector()
             court_detector.run(video_path, players_detections, court_type)
@@ -163,6 +167,7 @@ if __name__ == "__main__":
     parser.add_argument("--seg-model", default="yolov8n-seg.pt", help="YOLO segmentation model")
     parser.add_argument("--output", "-o", default=None, help="Output 2D video path")
     parser.add_argument("--output_both", default=None, help="Output side by side 2D video path")
+    parser.add_argument("--with-pose", action="store_true", help="Enrich players with pose skeletons for visualization")
     parser.add_argument("--court_type", choices=["nba", "fiba"], default="nba")
     parser.add_argument("--k-frames", type=int, default=30, help="Sample every k frames for clustering")
     parser.add_argument("--no_smoothing", type=bool, default=False, help="Disable smoothing")
@@ -181,6 +186,7 @@ if __name__ == "__main__":
         court_type=court_type,
         k_frames=args.k_frames,
         output_both=args.output_both,
+        with_pose=args.with_pose,
         enable_smoothing=not args.no_smoothing,
         no_cache=args.no_cache,
         no_cache_detector=args.no_cache_detector,
