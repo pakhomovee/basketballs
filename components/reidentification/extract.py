@@ -27,7 +27,7 @@ class ReIDFeatureExtractor:
         """Extract features for a list of BGR crops. Returns list of 2048-d numpy vectors."""
         tensors = [preprocess_reid_image(crop) for crop in crops]
         batch = torch.stack(tensors).to(self.device)
-        features = self.model(batch)
+        features = self.model.extract_features(batch)
         return [f.cpu().numpy() for f in features]
 
 

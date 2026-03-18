@@ -25,7 +25,9 @@ class BNNeck(nn.Module):
 class ReIDModel(nn.Module):
     """ResNet-50 backbone → 2048-d global feature → BNNeck → classifier.
 
-    During training returns (bn_feat, logits) for joint triplet + CE loss.
+    During training returns (global_feat, logits) for joint triplet + CE loss.
+    The triplet loss uses global features, while the classifier consumes BNNeck
+    features internally to produce logits.
     During inference returns L2-normalised features for distance computation.
     """
 
