@@ -23,7 +23,9 @@ def _create_eval_loader(root: str | Path, *, batch_size: int, num_workers: int) 
 
 
 @torch.inference_mode()
-def _extract_embeddings(model: ReIDModel, loader: DataLoader, *, device: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def _extract_embeddings(
+    model: ReIDModel, loader: DataLoader, *, device: str
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     features: list[torch.Tensor] = []
     pids: list[torch.Tensor] = []
     camids: list[torch.Tensor] = []

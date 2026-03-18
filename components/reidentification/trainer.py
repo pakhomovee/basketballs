@@ -119,7 +119,9 @@ def _run_epoch(
     return stats, time.time() - start_time
 
 
-def _log_epoch(epoch: int, epochs: int, optimizer: torch.optim.Optimizer, stats: EpochStats, steps: int, elapsed: float) -> None:
+def _log_epoch(
+    epoch: int, epochs: int, optimizer: torch.optim.Optimizer, stats: EpochStats, steps: int, elapsed: float
+) -> None:
     avg_id, avg_triplet, avg_total = stats.averaged(steps)
     cur_lr = optimizer.param_groups[0]["lr"]
     logger.info(
