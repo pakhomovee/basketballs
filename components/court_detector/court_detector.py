@@ -667,6 +667,7 @@ class CourtDetector:
         """
         Process video frame-by-frame, compute homography, and enrich each
         :class:`Player` with ``court_position`` (x_m, y_m in meters).
+        Returns homographies.
         """
 
         print(f"Running court detector on {video_path}...")
@@ -688,6 +689,7 @@ class CourtDetector:
                 pts = project_homography(np.array([[cx, cy]]), H)
                 if pts.size >= 2:
                     player.court_position = (float(pts[0, 0]) * court_w, float(pts[0, 1] * court_h))
+        return homographies
 
 
 def main():
