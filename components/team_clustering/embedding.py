@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import cv2
 import numpy as np
 from tqdm.auto import tqdm
@@ -11,10 +9,8 @@ from ultralytics import YOLO
 
 from common.classes.player import PlayersDetections
 from common.utils.utils import get_device
+from team_clustering.shared import DEFAULT_SEG_MODEL, clip_bbox
 
-
-DEFAULT_SEG_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "seg-model.pt"
-DEFAULT_SEG_MODEL = str(DEFAULT_SEG_MODEL_PATH)
 PLAYER_CLASS_ID = 1
 
 HUE_BINS = 12
@@ -42,26 +38,14 @@ def collect_player_crops(
     for player in players:
         if not player.bbox or len(player.bbox) < 4:
             continue
-        clipped_bbox = _clip_bbox(player.bbox, frame_w, frame_h)
+
+        clipped_bbox = clip_bbox(player.bbox, frame_w, frame_h)
         if clipped_bbox is None:
             continue
 
         x1, y1, x2, y2 = clipped_bbox
         entries.append((player, clipped_bbox, frame[y1:y2, x1:x2]))
     return entries
-
-
-def _clip_bbox(
-    bbox: list[int] | tuple[int, int, int, int],
-    width: int,
-    height: int,
-) -> tuple[int, int, int, int] | None:
-    x1, y1, x2, y2 = map(int, bbox)
-    x1, y1 = max(0, x1), max(0, y1)
-    x2, y2 = min(width, x2), min(height, y2)
-    if x2 - x1 < 5 or y2 - y1 < 5:
-        return None
-    return x1, y1, x2, y2
 
 
 def _bbox_iou(box_a: tuple[int, int, int, int], box_b: tuple[int, int, int, int]) -> float:
@@ -119,9 +103,10 @@ def _weighted_mean_and_std(values: np.ndarray, weights: np.ndarray) -> tuple[flo
 def extract_player_embeddings(
     video_path: str,
     detections: PlayersDetections,
+    seg_model: str = str(DEFAULT_SEG_MODEL),
 ) -> None:
     """Populate player embeddings using full-frame segmentation masks."""
-    embedder = PlayerEmbedder(device=get_device())
+    embedder = PlayerEmbedder(seg_model, device=get_device())
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
@@ -147,10 +132,11 @@ def extract_player_embeddings(
 class PlayerEmbedder:
     """Extract player masks and jersey-focused color embeddings."""
 
-    def __init__(self, device: str = "cpu"):
-        self.model = YOLO(DEFAULT_SEG_MODEL)
+    def __init__(self, model_path: str = str(DEFAULT_SEG_MODEL), device: str = "cpu"):
+        self.model = YOLO(model_path)
         self.model.to(device)
         self.device = device
+        self.player_class_id = PLAYER_CLASS_ID
 
     def _fallback_mask(self, crop: np.ndarray) -> np.ndarray:
         height, width = crop.shape[:2]
@@ -158,7 +144,7 @@ class PlayerEmbedder:
         cv2.rectangle(mask, (int(width * 0.25), int(height * 0.15)), (int(width * 0.75), int(height * 0.65)), 1, -1)
         return mask
 
-    def _refine_embedding_mask(self, crop: np.ndarray, mask: np.ndarray | None) -> np.ndarray:
+    def refine_embedding_mask(self, crop: np.ndarray, mask: np.ndarray | None) -> np.ndarray:
         if mask is None:
             return self._fallback_mask(crop)
 
@@ -184,6 +170,9 @@ class PlayerEmbedder:
         if refined_mask.sum() < max(25, int(binary_mask.sum() * 0.1)):
             return binary_mask
         return refined_mask
+
+    def _refine_embedding_mask(self, crop: np.ndarray, mask: np.ndarray | None) -> np.ndarray:
+        return self.refine_embedding_mask(crop, mask)
 
     def _compute_embedding_weights(self, crop: np.ndarray, mask: np.ndarray) -> np.ndarray:
         height, width = mask.shape
@@ -257,7 +246,7 @@ class PlayerEmbedder:
 
     def extract_embedding(self, crop: np.ndarray, mask: np.ndarray | None) -> np.ndarray:
         """Compute a jersey-focused color embedding for one player crop."""
-        refined_mask = self._refine_embedding_mask(crop, mask)
+        refined_mask = self.refine_embedding_mask(crop, mask)
         weights = self._compute_embedding_weights(crop, refined_mask)
         valid_pixels = weights > 0
 
@@ -345,6 +334,6 @@ class PlayerEmbedder:
         if not player_boxes:
             return []
 
-        result = self.model(frame, verbose=False, classes=[PLAYER_CLASS_ID], device=self.device)[0]
+        result = self.model(frame, verbose=False, classes=[self.player_class_id], device=self.device)[0]
         frame_masks = self._build_frame_masks(result, frame.shape[:2])
         return [self._match_mask_to_box(player_box, frame_masks) for player_box in player_boxes]
