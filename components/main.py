@@ -1,6 +1,7 @@
 import logging
 import os
 from pathlib import Path
+import cv2
 
 from cache import load_detections_cache, save_detections_cache
 from court_detector.court_detector import CourtDetector
@@ -14,7 +15,14 @@ from reidentification import extract_reid_embeddings
 from common.classes import CourtType
 from common.logger import get_logger
 from common.utils.utils import download
-from detector import Detector, enrich_detections_with_numbers, enrich_players_with_pose
+from detector import Detector, enrich_detections_with_numbers, enrich_players_with_pose, get_video_ball_detections
+from detector.remove_bad_ball_detections import remove_bad_ball_detections
+from detector.interpolate_ball_detections import linear_interpolate_ball_detections
+from actions.ball_possession import (
+    assign_ball_possession_soft_dribble,
+    greedy_possession_segments_soft_dribble,
+    apply_possession_segments,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -71,6 +79,22 @@ def _get_video_frame_width(video_path: str) -> float | None:
         return None
 
 
+def _get_video_frame_size(video_path: str) -> tuple[int, int] | None:
+    """Return (width, height) in pixels, or None if unavailable."""
+    try:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return None
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+        if w <= 0 or h <= 0:
+            return None
+        return w, h
+    except Exception:
+        return None
+
+
 def main(
     video_path: str,
     gt_path: str | None = None,
@@ -96,60 +120,40 @@ def main(
     """
     get_logger().clear()
     _ensure_default_models()
-    if gt_path is None:
-        # no_cache overrides the other two (full disable)
-        cache_detector = not (no_cache or no_cache_detector)
-        cache_embeds = not (no_cache or no_cache_embeds)
-        save_cache = not no_cache
+    possession_ball_detections = {}
 
-        players_detections = load_detections_cache(
-            video_path,
-            DEFAULT_SEG_MODEL,
-            use_detector_cache=cache_detector,
-            use_embeddings_cache=cache_embeds,
-        )
-        if players_detections is None:
-            detector = Detector()
-            all_detections = detector.detect_video(video_path)
-            players_detections, referees_detections, numbers_detections = enrich_detections_with_numbers(
-                video_path, all_detections
-            )
+    # Detector
 
-            if with_pose:
-                enrich_players_with_pose(video_path, players_detections)
+    detector = Detector()
+    all_detections = detector.detect_video(video_path)
+    players_detections, referees_detections, numbers_detections = enrich_detections_with_numbers(
+        video_path, all_detections
+    )
 
-            court_detector = CourtDetector()
-            court_detector.run(video_path, players_detections, court_type)
-            _extract_embeddings(video_path, players_detections, enable_reid=not no_reid)
-            if save_cache:
-                save_detections_cache(
-                    video_path,
-                    players_detections,
-                    DEFAULT_SEG_MODEL,
-                    use_detector_cache=cache_detector,
-                    use_embeddings_cache=cache_embeds,
-                )
-        else:
-            if no_cache_embeds and not no_cache:
-                # Loaded bbox + court, but recompute embeddings
-                for players in players_detections.values():
-                    for p in players:
-                        p.embedding = None
-                _extract_embeddings(video_path, players_detections, enable_reid=not no_reid)
-                save_detections_cache(video_path, players_detections, DEFAULT_SEG_MODEL)
-            else:
-                parts = []
-                if cache_detector:
-                    parts.append("detections")
-                if cache_embeds:
-                    parts.append("embeddings")
-                print(f"Loaded {' and '.join(parts)} from cache")
-    else:
-        detector = MockDetector(gt_path, normalized=True)
-        players_detections = detector.detect(video_path)
-        court_detector = CourtDetector()
-        court_detector.run(video_path, players_detections, court_type)
-        _extract_embeddings(video_path, players_detections, enable_reid=not no_reid)
+    if with_pose:
+        enrich_players_with_pose(video_path, players_detections)
+
+    raw_ball_detections = get_video_ball_detections(all_detections)
+
+    # Homography
+
+    court_detector = CourtDetector()
+    homographies = court_detector.run(video_path, players_detections, court_type)
+
+    # Ball detection
+    frame_size = _get_video_frame_size(video_path)
+
+    kept_ball_by_frame = remove_bad_ball_detections(
+        raw_ball_detections,
+        frame_size=frame_size,
+        homographies=homographies,
+    )
+
+    interpolated_ball_by_frame = linear_interpolate_ball_detections(kept_ball_by_frame)
+    possession_ball_detections = {frame_id: [ball] for frame_id, ball in interpolated_ball_by_frame.items()}
+
+    # Tracker
+    _extract_embeddings(video_path, players_detections, enable_reid=not no_reid)
 
     frame_width = _get_video_frame_width(video_path)
     tracker = FlowTracker(num_tracks=10, frame_width=frame_width)
@@ -158,8 +162,19 @@ def main(
     team_clustering = TeamClustering()
     team_clustering.run(players_detections)
 
+    # Possession
+
+    if possession_ball_detections:
+        assign_ball_possession_soft_dribble(players_detections, possession_ball_detections)
+        possession_segments = greedy_possession_segments_soft_dribble(players_detections)
+        apply_possession_segments(players_detections, possession_segments)
+
+    # Smoothing
+
     if enable_smoothing:
         smooth_detection_coordinates(players_detections)
+
+    # Visualization
 
     if output_2d_path is None:
         stem = Path(video_path).stem
@@ -169,7 +184,13 @@ def main(
     print(f"Saved 2D video to {output_2d_path}")
 
     if output_both is not None:
-        make_side_by_side_video(video_path, output_2d_path, output_both, detections=players_detections)
+        make_side_by_side_video(
+            video_path,
+            output_2d_path,
+            output_both,
+            detections=players_detections,
+            ball_detections=possession_ball_detections,
+        )
 
 
 if __name__ == "__main__":
@@ -177,9 +198,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("video_path", help="Path to input video")
+    parser.add_argument("output_both", help="Path to output both video path")
     parser.add_argument("--gt_path", default=None, help="Path to ground-truth annotations (MOT format)")
     parser.add_argument("--output", "-o", default=None, help="Output 2D video path")
-    parser.add_argument("--output_both", default=None, help="Output side by side 2D video path")
     parser.add_argument("--with-pose", action="store_true", help="Enrich players with pose skeletons for visualization")
     parser.add_argument("--court_type", choices=["nba", "fiba"], default="nba")
     parser.add_argument("--no_smoothing", type=bool, default=False, help="Disable smoothing")

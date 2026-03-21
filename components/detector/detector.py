@@ -79,6 +79,9 @@ def get_frame_players_detections(
     conf_threshold: float = 0.1,
     nms_iou_threshold: float = 0.9,
 ) -> list[Player]:
+    # class_id mapping from dataset yaml:
+    # 0: ball, 1: number, 2: player, 3: player-dribble, ...
+    DRIBBLE_CLASS_ID = 3
     player_detections = [
         d for d in frame_detections.detections if 2 <= d.class_id <= 8 and d.confidence >= conf_threshold
     ]
@@ -86,7 +89,15 @@ def get_frame_players_detections(
 
     player_detections.sort(key=lambda x: -x.confidence)
     player_detections = player_detections[:10]
-    return [Player(bbox=d.get_bbox(), player_id=i, confidence=d.confidence) for i, d in enumerate(player_detections)]
+    return [
+        Player(
+            bbox=d.get_bbox(),
+            player_id=i,
+            confidence=d.confidence,
+            is_dribble=(d.class_id == DRIBBLE_CLASS_ID),
+        )
+        for i, d in enumerate(player_detections)
+    ]
 
 
 def get_video_players_detections(video_detections: VideoDetections, conf_threshold=0.1) -> PlayersDetections:
@@ -153,7 +164,7 @@ def get_frame_pose_detections(
 
 
 def get_frame_ball_detections(
-    frame_detections: FrameDetections, conf_threshold=0.1, nms_iou_threshold: float = 0.9
+    frame_detections: FrameDetections, conf_threshold=0.2, nms_iou_threshold: float = 0.9
 ) -> list[Ball]:
     ball_detections = [d for d in frame_detections.detections if d.class_id == 0 and d.confidence >= conf_threshold]
     ball_detections = _nms_detections(ball_detections, iou_threshold=nms_iou_threshold)

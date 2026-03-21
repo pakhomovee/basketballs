@@ -15,9 +15,10 @@ from detector.number_recognizer_parseq import recognize_numbers_in_frame as reco
 import argparse
 import cv2
 import numpy as np
-from skimage.feature import match_template
 from tqdm.auto import tqdm
 from detector.remove_bad_ball_detections import remove_bad_ball_detections
+from detector.interpolate_ball_detections import linear_interpolate_ball_detections
+from common.distances import bbox_iou
 
 from court_detector.court_detector import CourtDetector
 from court_detector.court_constants import CourtConstants
@@ -78,13 +79,11 @@ def _draw_skeleton(
 def video_with_ball_bbox_yolo(
     input_path: str,
     output_path: str | None = None,
-    conf_threshold: float = 0.3,
-    draw_all: bool = False,
-    roi_conf_threshold: float = 0.5,
     *,
     draw_player_bboxes: bool = False,
     draw_player_numbers: bool = False,
     draw_player_skeletons: bool = False,
+    draw_pose_bboxes: bool = False,
 ) -> str:
     """
     Two passes: 1) detection (YOLO + template matching), 2) drawing with gap interpolation.
@@ -92,28 +91,20 @@ def video_with_ball_bbox_yolo(
 
     Args:
         input_path: path to input video.
-        output_path: path to output video. If None — next to input as <stem>_ball_yolo.mp4.
-        conf_threshold: confidence threshold for ball detection.
-        draw_all: if True, draw all detections; otherwise only the best.
-        roi_conf_threshold: unused (kept for compatibility).
+        output_path: path to output video.
 
     Returns:
         Path to the saved file.
     """
-    if output_path is None:
-        p = Path(input_path)
-        output_path = str(p.parent / f"{p.stem}_ball_yolo{p.suffix}")
 
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {input_path}")
 
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    fps = cap.get(cv2.CAP_PROP_FPS)
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    if total_frames <= 0:
-        total_frames = None
 
     detector = Detector()
     detections = detector.detect_video(input_path)
@@ -129,12 +120,9 @@ def video_with_ball_bbox_yolo(
     pbar2 = tqdm(total=total_frames, desc="Pass 2: draw", unit="frame")
 
     ball_detections = get_video_ball_detections(detections)
-    player_detections = (
-        get_video_players_detections(detections, conf_threshold=0.1)
-        if (draw_player_bboxes or draw_player_numbers or draw_player_skeletons)
-        else {}
-    )
-    referee_detections = get_video_referee_detections(detections, conf_threshold=0.1) if draw_player_numbers else {}
+    player_detections = get_video_players_detections(detections, conf_threshold=0.1)
+
+    referee_detections = get_video_referee_detections(detections, conf_threshold=0.1)
     rim_detections = get_video_rim_detections(detections, conf_threshold=0.1)
 
     # Homographies: frame normalized coords [0,1]^2 -> court normalized coords [-0.5,0.5]^2.
@@ -146,14 +134,8 @@ def video_with_ball_bbox_yolo(
         ball_detections,
         frame_size=(w, h),
         homographies=homographies,
-        conf_threshold=conf_threshold,
     )
-
-    # Directory for frames with player detections > 10 or ball detections > 1
-    # many_players_dir = Path(input_path).parent / f"{Path(input_path).stem}_frames_many_players"
-    # many_players_dir.mkdir(parents=True, exist_ok=True)
-    # PLAYER_DETECTION_SAVE_THRESHOLD = 10
-    # BALL_DETECTION_SAVE_THRESHOLD = 1
+    interpolated_ball_by_frame = linear_interpolate_ball_detections(kept_ball_by_frame)
 
     max_player_detections = 0
     max_ball_detections = 0
@@ -176,10 +158,11 @@ def video_with_ball_bbox_yolo(
             players_in_frame = player_detections.get(i, [])
             balls_in_frame = ball_detections.get(i, [])
             kept_ball = kept_ball_by_frame.get(i)
+            interpolated_ball = interpolated_ball_by_frame.get(i)
             referees_in_frame = referee_detections.get(i, [])
             rims_in_frame = rim_detections.get(i, [])
             if draw_player_numbers:
-                numbers_in_frame = get_frame_number_detections(detections[i], frame=None, conf_threshold=0.25)
+                numbers_in_frame = get_frame_number_detections(detections[i])
                 recognize_numbers_parseq(frame, numbers_in_frame, padding=5, ocr_conf_threshold=0.999)
                 match_numbers_to_players(
                     {i: players_in_frame},
@@ -189,8 +172,24 @@ def video_with_ball_bbox_yolo(
 
             if draw_player_skeletons:
                 # Pose (YOLO-pose) -> match to our players -> store in player.skeleton
-                poses_in_frame = get_frame_pose_detections(frame, conf_threshold=0.15)
-                match_poses_to_players(players_in_frame, poses_in_frame, iou_threshold=0.3)
+                poses_in_frame = get_frame_pose_detections(frame)
+                match_poses_to_players(players_in_frame, poses_in_frame, iou_threshold=0.7)
+                # Build best pose match per player index for optional pose-bbox drawing.
+                pose_by_player_idx: dict[int, object] = {}
+                for p_idx, player_detection in enumerate(players_in_frame):
+                    if not player_detection.bbox:
+                        continue
+                    best_iou = 0.0
+                    best_pose = None
+                    for pose in poses_in_frame:
+                        iou = bbox_iou(player_detection.bbox, pose.bbox)
+                        if iou > best_iou:
+                            best_iou = iou
+                            best_pose = pose
+                    if best_pose is not None and best_iou >= 0.7:
+                        pose_by_player_idx[p_idx] = best_pose
+            else:
+                pose_by_player_idx = {}
 
             def draw_detection(ball_detection, color):
                 detection = ball_detection.bbox
@@ -207,39 +206,56 @@ def video_with_ball_bbox_yolo(
 
             if kept_ball is not None:
                 draw_detection(kept_ball, (0, 255, 0))
+            elif interpolated_ball is not None:
+                # Frames that exist only after interpolation are drawn in a separate color.
+                draw_detection(interpolated_ball, (255, 0, 255))
 
-            if draw_player_bboxes or draw_player_numbers or draw_player_skeletons:
-                for player_detection in players_in_frame:
+            for p_idx, player_detection in enumerate(players_in_frame):
+                if draw_pose_bboxes and draw_player_skeletons and p_idx in pose_by_player_idx:
+                    detection = pose_by_player_idx[p_idx].bbox
+                else:
                     detection = player_detection.bbox
-                    x1, y1, x2, y2 = detection[0], detection[1], detection[2], detection[3]
-                    has_recognized_num = (
-                        draw_player_numbers
-                        and player_detection.number is not None
-                        and player_detection.number.num is not None
-                    )
-                    color = color_player_with_number if has_recognized_num else color_player
+                x1, y1, x2, y2 = detection[0], detection[1], detection[2], detection[3]
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                has_recognized_num = (
+                    draw_player_numbers
+                    and player_detection.number is not None
+                    and player_detection.number.num is not None
+                )
+                color = color_player_with_number if has_recognized_num else color_player
 
-                    if draw_player_bboxes:
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+                if draw_player_bboxes:
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+                    if getattr(player_detection, "is_dribble", False):
+                        cx = (x1 + x2) // 2
+                        top_y = max(0, y1 - 40)
+                        cv2.arrowedLine(
+                            frame,
+                            (cx, top_y),
+                            (cx, y1),
+                            (0, 255, 255),  # bright yellow/cyan
+                            3,
+                            tipLength=0.3,
+                        )
 
-                    if (
-                        draw_player_skeletons
-                        and player_detection.skeleton is not None
-                        and player_detection.skeleton.keypoints is not None
-                    ):
-                        _draw_skeleton(frame, player_detection.skeleton.keypoints)
+                if (
+                    draw_player_skeletons
+                    and player_detection.skeleton is not None
+                    and player_detection.skeleton.keypoints is not None
+                ):
+                    _draw_skeleton(frame, player_detection.skeleton.keypoints)
 
-                    if draw_player_numbers:
-                        if has_recognized_num:
-                            label = str(player_detection.number.num)
-                        elif player_detection.confidence is not None:
-                            label = f"{player_detection.confidence:.2f}"
-                        else:
-                            label = None
-                        if label is not None and draw_player_bboxes:
-                            (tw, th), _ = cv2.getTextSize(label, font, font_scale, font_thickness)
-                            cv2.rectangle(frame, (x1, y1 - th - 4), (x1 + tw + 4, y1), color, -1)
-                            cv2.putText(frame, label, (x1 + 2, y1 - 2), font, font_scale, (0, 0, 0), font_thickness)
+                if draw_player_numbers:
+                    if has_recognized_num:
+                        label = str(player_detection.number.num)
+                    elif player_detection.confidence is not None:
+                        label = f"{player_detection.confidence:.2f}"
+                    else:
+                        label = None
+                    if label is not None:
+                        (tw, th), _ = cv2.getTextSize(label, font, font_scale, font_thickness)
+                        cv2.rectangle(frame, (x1, y1 - th - 4), (x1 + tw + 4, y1), color, -1)
+                        cv2.putText(frame, label, (x1 + 2, y1 - 2), font, font_scale, (0, 0, 0), font_thickness)
 
             for referee_detection in referees_in_frame:
                 detection = referee_detection.bbox
@@ -263,10 +279,6 @@ def video_with_ball_bbox_yolo(
 
             avg_players += len(players_in_frame)
 
-            # if num_players > PLAYER_DETECTION_SAVE_THRESHOLD or num_balls > BALL_DETECTION_SAVE_THRESHOLD:
-            #     frame_path = many_players_dir / f"frame_{i:06d}_players_{num_players}_balls_{num_balls}.jpg"
-            #     cv2.imwrite(str(frame_path), frame)
-
             writer.write(frame)
             pbar2.update(1)
             # break
@@ -286,21 +298,23 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("input", help="Path to input video")
     parser.add_argument("output", help="Path to output video")
-    parser.add_argument("--conf", type=float, default=0.3, help="Ball confidence threshold")
-    parser.add_argument("--draw-all", action="store_true", help="Draw all ball detections (unused; kept)")
     parser.add_argument("--draw-player-bboxes", action="store_true", help="Draw player bounding boxes")
     parser.add_argument("--draw-player-numbers", action="store_true", help="Run number recognition and draw labels")
     parser.add_argument("--draw-player-skeletons", action="store_true", help="Run pose detection and draw skeletons")
+    parser.add_argument(
+        "--draw-pose-bboxes",
+        action="store_true",
+        help="Draw pose-matched player bboxes instead of detector bboxes (requires --draw-player-skeletons)",
+    )
     args = parser.parse_args()
 
     video_with_ball_bbox_yolo(
         args.input,
         args.output,
-        conf_threshold=args.conf,
-        draw_all=args.draw_all,
         draw_player_bboxes=args.draw_player_bboxes,
         draw_player_numbers=args.draw_player_numbers,
         draw_player_skeletons=args.draw_player_skeletons,
+        draw_pose_bboxes=args.draw_pose_bboxes,
     )
 
 

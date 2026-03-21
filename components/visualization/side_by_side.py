@@ -91,6 +91,7 @@ def make_side_by_side_video(
     output_path: str,
     *,
     detections=None,  # dict[int, list[Player]] | None
+    ball_detections=None,  # dict[int, list[Ball]] | None
     show_logs: bool = True,
     log_level_colors: dict[str, tuple[int, int, int]] | None = None,
     log_source_color: tuple[int, int, int] | None = None,
@@ -99,13 +100,15 @@ def make_side_by_side_video(
 ) -> None:
     """
     Create video with top (real) and bottom (2D projection) views.
-    Optionally draws bounding boxes with IDs on the top video if `detections` is provided.
+    Optionally draws player bboxes/IDs on the top video if `detections` is provided.
+    Optionally draws ball center as a circle if `ball_detections` is provided.
     Optionally adds a logs panel at the bottom showing logs for each frame.
 
     top_video_path    — path to first (top) video.
     bottom_video_path — path to second (bottom) video.
     output_path       — path to output video.
     detections        — (optional) players dict to draw on top video.
+    ball_detections   — (optional) ball dict (frame_id -> list[Ball]) to draw center circles.
     show_logs         — if True, add logs panel for current frame (default True).
     log_level_colors  — BGR colors per level: {"info": (b,g,r), "warn": ..., "error": ..., "debug": ...}.
     log_source_color  — BGR color for [source] tag.
@@ -189,6 +192,41 @@ def make_side_by_side_video(
                                 (0, 0, 0),
                                 2,
                             )
+                        # Draw ball possession arrows:
+                        # - raw possession (left of center) in orange
+                        # - postprocessed possession (right of center) in red
+                        cx = (x1 + x2) // 2
+                        top_y = max(0, y1 - 40)
+                        if getattr(player, "has_ball_raw", False):
+                            cv2.arrowedLine(
+                                frame_top,
+                                (cx - 10, top_y),
+                                (cx - 10, y1),
+                                (0, 165, 255),
+                                3,
+                                tipLength=0.3,
+                            )
+                        if getattr(player, "has_ball_post", False):
+                            cv2.arrowedLine(
+                                frame_top,
+                                (cx + 10, top_y),
+                                (cx + 10, y1),
+                                (0, 0, 255),
+                                3,
+                                tipLength=0.3,
+                            )
+
+            # Draw ball center circle if provided
+            if ball_detections is not None:
+                balls_in_frame = ball_detections.get(frame_id, [])
+                if balls_in_frame:
+                    # Use the most confident ball for visualization
+                    best_ball = max(balls_in_frame, key=lambda b: b.confidence or 0.0)
+                    if best_ball.bbox and len(best_ball.bbox) >= 4:
+                        x1, y1, x2, y2 = best_ball.bbox[:4]
+                        cx = int((x1 + x2) / 2)
+                        cy = int((y1 + y2) / 2)
+                        cv2.circle(frame_top, (cx, cy), 6, (0, 165, 255), -1)
 
             frame_bottom = cv2.resize(frame_bottom, (target_bottom_w, target_bottom_h))
 

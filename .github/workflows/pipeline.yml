@@ -34,4 +34,4 @@ jobs:
 
       - name: Run main pipeline
         working-directory: components
-        run: python3 main.py ../dataset/sample.mp4 --output_both=out.mp4
+        run: python3 main.py ../dataset/sample.mp4 out.mp4
