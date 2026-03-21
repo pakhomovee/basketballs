@@ -120,7 +120,6 @@ def main(
     """
     get_logger().clear()
     _ensure_default_models()
-    kept_ball_detections = {}
     possession_ball_detections = {}
 
     # Detector
