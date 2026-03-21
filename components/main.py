@@ -18,7 +18,7 @@ from common.utils.utils import download
 from detector import Detector, enrich_detections_with_numbers, enrich_players_with_pose, get_video_ball_detections
 from detector.remove_bad_ball_detections import remove_bad_ball_detections
 from detector.interpolate_ball_detections import linear_interpolate_ball_detections
-from actions import (
+from actions.ball_possession import (
     assign_ball_possession_soft_dribble,
     greedy_possession_segments_soft_dribble,
     apply_possession_segments,
