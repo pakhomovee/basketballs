@@ -663,7 +663,7 @@ class CourtDetector:
             return None
         return H
 
-    def run(self, video_path: str, detections: PlayersDetections, court_type: CourtType = CourtType.NBA) -> None:
+    def run(self, video_path: str, detections: PlayersDetections, court_type: CourtType = CourtType.NBA):
         """
         Process video frame-by-frame, compute homography, and enrich each
         :class:`Player` with ``court_position`` (x_m, y_m in meters).

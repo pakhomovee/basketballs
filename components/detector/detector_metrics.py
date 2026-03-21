@@ -150,8 +150,7 @@ def load_test_gt_and_predictions(
         detections = detector.detect_frame(img)
         frame_detections = FrameDetections(frame_id=0, detections=detections)
         players = get_frame_players_detections(frame_detections, conf_threshold=conf_threshold)
-        dets_player = [d for d in detections if d.class_id == player_cls_id and d.confidence >= conf_threshold]
-        pred_boxes = [(p.bbox[0], p.bbox[1], p.bbox[2], p.bbox[3], d.confidence) for p, d in zip(players, dets_player)]
+        pred_boxes = [(p.bbox[0], p.bbox[1], p.bbox[2], p.bbox[3], p.confidence) for p in players]
 
         all_gt_boxes.append(gt_boxes)
         all_pred_boxes.append(pred_boxes)
@@ -163,7 +162,7 @@ def load_test_gt_and_predictions_ball(
     dataset_path: str | Path,
     model_path: str | Path | None,
     conf_threshold: float,
-    ball_cls_id: int | None = None,
+    ball_cls_id: int = 0,
 ) -> tuple[list[list[tuple[int, int, int, int]]], list[list[tuple[int, int, int, int, float]]], int]:
     """
     Load test split, run detector, return GT and predictions per frame for ball.
@@ -227,8 +226,8 @@ def load_test_gt_and_predictions_ball(
         detections = detector.detect_frame(img)
         frame_detections = FrameDetections(frame_id=0, detections=detections)
         balls = get_frame_ball_detections(frame_detections, conf_threshold=conf_threshold)
-        dets_ball = [d for d in detections if d.class_id == ball_cls_id and d.confidence >= conf_threshold]
-        pred_boxes = [(b.bbox[0], b.bbox[1], b.bbox[2], b.bbox[3], d.confidence) for b, d in zip(balls, dets_ball)]
+        # dets_ball = [d for d in detections if d.class_id == ball_cls_id and d.confidence >= conf_threshold]
+        pred_boxes = [(b.bbox[0], b.bbox[1], b.bbox[2], b.bbox[3], b.confidence) for b in balls]
 
         all_gt_boxes.append(gt_boxes)
         all_pred_boxes.append(pred_boxes)

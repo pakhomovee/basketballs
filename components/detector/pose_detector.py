@@ -1,10 +1,10 @@
 """
-Лёгкая обёртка над YOLO-pose моделью для детекции поз игроков на баскетбольных видео.
+Lightweight wrapper around a YOLO-pose model for player pose detection on basketball videos.
 
-Этот модуль специально сделан самодостаточным и НЕ изменяет существующий код проекта.
-Его можно импортировать и использовать независимо от основного пайплайна детекции.
+This module is intentionally self-contained and does NOT modify any existing code.
+It can be imported and used independently alongside the existing detector pipeline.
 
-Пример:
+Example:
     from detector.pose_detector import PoseDetector, detect_video_poses
 
     poses_by_frame = detect_video_poses("input.mp4")
@@ -33,13 +33,13 @@ from detector import (
 @dataclass
 class PoseDetection:
     """
-    Одна детекция позы (для одного человека) на кадре.
+    Single pose detection for one person in a frame.
 
-    Поля:
-        bbox: [x1, y1, x2, y2] в пикселях.
-        keypoints: np.ndarray формы (K, 3) с (x, y, confidence) для каждой ключевой точки.
-        score: уверенность детекции (confidence).
-        class_id: id класса из pose-модели (обычно 0 для человека).
+    Attributes:
+        bbox: [x1, y1, x2, y2] in pixels.
+        keypoints: np.ndarray of shape (K, 3) with (x, y, confidence) per keypoint.
+        score: overall detection confidence.
+        class_id: integer class ID from the pose model (e.g. 0 for person).
     """
 
     bbox: List[float] = field(default_factory=list)
@@ -53,11 +53,11 @@ FramePoses = Dict[int, List[PoseDetection]]  # frame_id -> list of poses
 
 class PoseDetector:
     """
-    Детектор поз игроков на базе YOLO-pose.
+    YOLO-pose based detector for player poses in basketball videos.
 
-    Модель загружается один раз и применяется покадрово.
-    По умолчанию ожидается checkpoint pose-модели в папке models/ репозитория,
-    но можно передать свой путь.
+    The model is loaded once and then applied frame-by-frame.
+    By default it expects a pose checkpoint in the repository's models/ directory,
+    but a custom path can be passed explicitly.
     """
 
     def __init__(
@@ -67,9 +67,9 @@ class PoseDetector:
     ):
         """
         Args:
-            model_path: путь до YOLO-pose checkpoint. Если None, используется
-                <repo_root>/models/yolov8n-pose.pt по умолчанию.
-            conf_threshold: минимальный confidence для сохранения pose-детекций.
+            model_path: Path to YOLO-pose checkpoint. If None, uses
+                <repo_root>/models/yolov8n-pose.pt by default.
+            conf_threshold: Minimum confidence for keeping a pose detection.
         """
         repo_root = Path(__file__).resolve().parent.parent.parent
         default_model = repo_root / "models" / "yolov8m-pose.pt"
@@ -79,10 +79,10 @@ class PoseDetector:
 
     def detect_frame(self, frame: np.ndarray) -> List[PoseDetection]:
         """
-        Запустить pose-детекцию на одном кадре.
+        Run pose detection on a single frame.
 
         Returns:
-            Список PoseDetection для этого кадра.
+            List of PoseDetection for this frame.
         """
         results = self.model(frame, verbose=False, conf=self.conf_threshold)[0]
         poses: List[PoseDetection] = []
@@ -106,7 +106,7 @@ class PoseDetector:
             x1, y1, x2, y2 = xyxy[i].tolist()
             score = float(confs[i])
             class_id = int(clses[i])
-            # Объединяем координаты и confidence в (K, 3)
+            # Combine keypoint coordinates and confidences into (K, 3)
             kp_xy = k_xy[i]  # (K, 2)
             kp_c = k_conf[i][:, None]  # (K, 1)
             kp = np.concatenate([kp_xy, kp_c], axis=1)  # (K, 3)
@@ -123,13 +123,13 @@ class PoseDetector:
 
     def detect_video(self, video_path: str) -> FramePoses:
         """
-        Запустить pose-детекцию на всех кадрах видео.
+        Run pose detection on all frames of the given video.
 
         Args:
-            video_path: путь до входного видео.
+            video_path: Path to the input basketball video.
 
         Returns:
-            Словарь frame_id -> list[PoseDetection].
+            Dictionary mapping frame_id -> list[PoseDetection].
         """
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -156,10 +156,10 @@ def detect_video_poses(
     conf_threshold: float = 0.25,
 ) -> FramePoses:
     """
-    Удобная обёртка: прогнать YOLO-pose по видео и вернуть позы по кадрам.
+    Convenience function: run YOLO-pose on a video and return per-frame poses.
 
-    Это тонкая обёртка вокруг PoseDetector для быстрого запуска.
-    Функция самодостаточная и не меняет существующий код проекта.
+    This is a thin wrapper around PoseDetector for quick one-shot usage.
+    Existing code is not modified; this function is fully standalone.
     """
     detector = PoseDetector(model_path=model_path, conf_threshold=conf_threshold)
     return detector.detect_video(video_path)
@@ -176,10 +176,10 @@ def _draw_pose_skeleton(
     conf_threshold: float = 0.3,
 ) -> None:
     """
-    Нарисовать ключевые точки и простой "скелет" на кадре для одного PoseDetection.
+    Draw keypoints and a simple skeleton on the frame for a single PoseDetection.
 
-    Точная связность зависит от порядка keypoints в YOLO-pose; здесь используется
-    небольшой COCO-подобный набор связей, который обычно подходит для отладки.
+    The exact connectivity depends on the YOLO-pose keypoint ordering; here we use
+    a generic subset of COCO-style limbs which works reasonably well for debugging.
     """
     if pose.keypoints is None or pose.keypoints.size == 0:
         return
@@ -187,14 +187,14 @@ def _draw_pose_skeleton(
     kps = pose.keypoints  # (K, 3) -> (x, y, c)
     num_kp = kps.shape[0]
 
-    # Рисуем точки
+    # Draw joints
     for idx in range(num_kp):
         x, y, c = kps[idx]
         if c < conf_threshold:
             continue
         cv2.circle(frame, (int(x), int(y)), radius, keypoint_color, -1, lineType=cv2.LINE_AA)
 
-    # Простые связи "скелета" (для частого 17-kp порядка; с защитой по индексам)
+    # Simple skeleton connections (indices for common 17-kp layout; robust to missing indices)
     skeleton: Iterable[Tuple[int, int]] = [
         (5, 6),  # shoulders
         (5, 7),
@@ -225,16 +225,16 @@ def write_video_with_poses(
     conf_threshold: float = 0.25,
 ) -> str:
     """
-    Прогнать YOLO-pose по видео и сохранить новое видео с отрисованными позами.
+    Run YOLO-pose on a basketball video and save a new video with drawn poses.
 
-    Высокоуровневая обёртка:
-      1) Открывает входное видео
-      2) Запускает PoseDetector покадрово
-      3) Рисует keypoints + "скелет" для каждого найденного человека
-      4) Сохраняет результат в новый файл
+    This is a high-level convenience wrapper that:
+      1) Opens the input video
+      2) Runs PoseDetector frame-by-frame
+      3) Draws keypoints + skeleton for each detected person
+      4) Saves the result to a new file
 
     Returns:
-        Путь к сохранённому видео.
+        Path to the saved output video.
     """
     cap = cv2.VideoCapture(input_video_path)
     if not cap.isOpened():
@@ -254,7 +254,7 @@ def write_video_with_poses(
 
     try:
         frame_id = 0
-        # Кол-во кадров может быть неизвестно/0, поэтому tqdm без total
+        # Total frames can be 0 / unknown, so don't rely on tqdm(total=...)
         for _ in tqdm(iter(int, 1), desc="Pose video", unit="frame"):
             ret, frame = cap.read()
             if not ret:
@@ -282,22 +282,22 @@ def write_video_with_player_poses(
     player_conf_threshold: float = 0.1,
 ) -> str:
     """
-    Сначала детектим игроков, затем применяем YOLO-pose только на кропах игроков.
+    Run player detector first, then apply YOLO-pose only on player crops.
 
-    Пайплайн:
+    Pipeline:
       1) Detector() -> detect_video(input_video_path) -> VideoDetections
-      2) get_video_players_detections(...) -> игроки по кадрам
-      3) Для каждого кадра: кроп по bbox игрока и запуск PoseDetector на кропе
-      4) Перенос keypoints обратно в координаты исходного кадра и отрисовка "скелета"
+      2) get_video_players_detections(...) -> players per frame
+      3) For each frame: crop each player bbox and run PoseDetector on the crop
+      4) Map keypoints back to full-frame coordinates and draw the skeleton
 
-    Это даёт позы только для игроков и уменьшает работу pose‑модели на фоне.
+    This produces poses for players only and reduces pose-model work on background regions.
     """
-    # 1) Получаем детекции игроков по всему видео
+    # 1) Get player detections for the whole video
     det = Detector()
     video_detections = det.detect_video(input_video_path)
     players_detections = get_video_players_detections(video_detections, conf_threshold=player_conf_threshold)
 
-    # 2) Готовим ввод/вывод видео
+    # 2) Prepare video I/O
     cap = cv2.VideoCapture(input_video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {input_video_path}")
@@ -339,7 +339,7 @@ def write_video_with_player_poses(
                     continue
 
                 poses = pose_detector.detect_frame(crop)
-                # Переносим keypoints в координаты полного кадра и рисуем
+                # Map keypoints back to full-frame coordinates and draw
                 for pose in poses:
                     if pose.keypoints is not None and pose.keypoints.size > 0:
                         pose.keypoints[:, 0] += x1
@@ -364,7 +364,7 @@ def _match_poses_to_players(
     Match YOLO-pose detections to existing Player objects by IoU of bboxes.
 
     Returns:
-        dict[player] -> PoseDetection
+        List of (player, PoseDetection) pairs
     """
     matched: list[tuple] = []
     for player in players:
@@ -392,7 +392,7 @@ def _hand_centers_from_pose(
     """
     Return list of hand points (left/right wrists) for pose.
 
-    Каждая рука рассматривается отдельно; может вернуть 0, 1 или 2 точек.
+    Each hand is considered separately; may return 0, 1 or 2 points.
     """
     if pose.keypoints is None or pose.keypoints.size == 0:
         return []
@@ -419,19 +419,19 @@ def write_video_with_ball_handler_poses(
 ) -> str:
     """
     Detect players + ball with your Detector, run YOLO-pose on full frames,
-    матчить позы к игрокам и подсвечивать игрока с мячом стрелочкой.
+    match poses to players, and highlight the ball handler with an arrow.
 
-    «Игрок с мячом» определяется как тот, чьи руки (средняя точка запястий)
-    ближе всего к центру bbox мяча.
+    "Ball handler" is the player whose hand (either wrist keypoint) is closest
+    to the center of the ball bbox.
     """
-    # 1) Детекции игроков и мяча по всему видео
+    # 1) Player/ball detections for the whole video
     det = Detector()
     video_detections = det.detect_video(input_video_path)
     players_detections = get_video_players_detections(video_detections, conf_threshold=player_conf_threshold)
     ball_detections = get_video_ball_detections(video_detections)
     rim_detections = get_video_rim_detections(video_detections, conf_threshold=0.1)
 
-    # 2) Подготовка видео I/O
+    # 2) Prepare video I/O
     cap = cv2.VideoCapture(input_video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {input_video_path}")
@@ -465,17 +465,17 @@ def write_video_with_ball_handler_poses(
             poses = pose_detector.detect_frame(frame)
             matched = _match_poses_to_players(players_in_frame, poses)
 
-            # Рисуем скелеты и рамки игроков
+            # Draw skeletons and player boxes
             for player, pose in matched:
                 _draw_pose_skeleton(frame, pose)
                 if player.bbox:
                     x1, y1, x2, y2 = map(int, player.bbox)
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 165, 0), 2)
 
-            # Определяем игрока с мячом
+            # Determine ball handler
             ball_center: Tuple[float, float] | None = None
             if balls_in_frame:
-                # Берём самый уверенный мяч
+                # Take the most confident ball detection
                 best_ball = max(balls_in_frame, key=lambda b: b.confidence or 0.0)
                 bx1, by1, bx2, by2 = best_ball.bbox
                 ball_center = ((bx1 + bx2) / 2.0, (by1 + by2) / 2.0)
@@ -495,12 +495,12 @@ def write_video_with_ball_handler_poses(
                             best_dist = dist2
                             best_player_for_ball = player
 
-            # Рисуем стрелку над игроком с мячом только если руки достаточно близко к мячу
+            # Draw arrow above ball handler only if the hand is close enough to the ball
             if best_player_for_ball is not None and best_player_for_ball.bbox and best_dist <= max_hand_ball_dist**2:
                 x1, y1, x2, y2 = map(int, best_player_for_ball.bbox)
                 cx = (x1 + x2) // 2
                 top_y = max(0, y1 - 40)
-                # Стрелка вниз к игроку
+                # Arrow down to the player
                 cv2.arrowedLine(
                     frame,
                     (cx, top_y),
@@ -510,79 +510,12 @@ def write_video_with_ball_handler_poses(
                     tipLength=0.3,
                 )
 
-            # Рисуем rim (класс 10) из детектора
+            # Draw rim (class 10) from the detector
             for rim_det in rims_in_frame:
                 rx1, ry1, rx2, ry2 = rim_det.get_bbox()
                 cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), (0, 0, 255), 2)
 
             writer.write(frame)
-            frame_id += 1
-    finally:
-        cap.release()
-        writer.release()
-
-    return output_video_path
-
-
-def write_video_with_poses_rtmpose(
-    input_video_path: str,
-    output_video_path: str | None = None,
-    *,
-    model: str = "rtmpose-m_8xb256-420e_coco-256x192",
-    device: str | None = None,
-) -> str:
-    """
-    Эксперимент: использовать RTMPose (MMPose) вместо YOLO-pose по полному кадру.
-
-    Требуется установленный mmpose (dev-1.x) и соответствующая модель RTMPose.
-    Используется высокоуровневый MMPoseInferencer и его визуализация.
-    """
-    from mmpose.apis import MMPoseInferencer
-
-    inferencer = MMPoseInferencer(model, device=device)
-
-    cap = cv2.VideoCapture(input_video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {input_video_path}")
-
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    if output_video_path is None:
-        p = Path(input_video_path)
-        output_video_path = str(p.parent / f"{p.stem}_poses_rtmpose{p.suffix}")
-
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(output_video_path, fourcc, fps, (w, h))
-
-    try:
-        frame_id = 0
-        for _ in tqdm(iter(int, 1), desc="RTMPose video", unit="frame"):
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            # RTMPose ожидает RGB; конвертируем из BGR
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            # inferencer возвращает генератор; берём первый результат
-            result_gen = inferencer(rgb, return_vis=True, show=False)
-            result = next(result_gen)
-            vis_list = result.get("visualization", None)
-            if not vis_list:
-                # если ничего не найдено — оставляем исходный кадр
-                writer.write(frame)
-            else:
-                vis = vis_list[0]
-                # визуализация в RGB; конвертируем обратно в BGR при необходимости
-                if vis.shape[2] == 3:
-                    vis_bgr = cv2.cvtColor(vis, cv2.COLOR_RGB2BGR)
-                else:
-                    vis_bgr = vis
-                # подстраховка: ресайз, если inferencer изменил размер
-                if vis_bgr.shape[1] != w or vis_bgr.shape[0] != h:
-                    vis_bgr = cv2.resize(vis_bgr, (w, h))
-                writer.write(vis_bgr)
-
             frame_id += 1
     finally:
         cap.release()

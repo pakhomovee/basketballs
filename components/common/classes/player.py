@@ -25,6 +25,12 @@ class Player:
 
     number: Number | None = None
     skeleton: Skeleton | None = None
+    has_ball: bool = False
+    has_ball_raw: bool = False
+    has_ball_post: bool = False
+    possession_conf_raw: float = 0.0
+    possession_conf_post: float = 0.0
+    is_dribble: bool = False
 
     # Enriched by embedding extraction (mask-based color histograms, for team clustering)
     embedding: np.ndarray | None = None

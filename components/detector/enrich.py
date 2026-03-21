@@ -66,26 +66,39 @@ def match_poses_to_players(
     players: list[Player],
     poses: list[PoseDetection],
     *,
-    iou_threshold: float = 0.3,
+    iou_threshold: float = 0.7,
 ) -> None:
     """
-    Match pose detections to Player objects by IoU of bboxes and set player.skeleton.
+    Match pose detections to players by IoU in descending order (greedy one-to-one).
+
+    Computes IoU for every (player, pose) pair, sorts all pairs by IoU descending,
+    then greedily assigns matches while enforcing:
+      - one pose can match at most one player
+      - one player can match at most one pose
+    Only pairs with IoU >= iou_threshold are considered.
     """
     for p in players:
         p.skeleton = None
 
-    for player in players:
+    candidates: list[tuple[float, int, int]] = []  # (iou, player_idx, pose_idx)
+    for p_idx, player in enumerate(players):
         if not player.bbox:
             continue
-        best_iou = 0.0
-        best_pose: PoseDetection | None = None
-        for pose in poses:
+        for pose_idx, pose in enumerate(poses):
             iou = bbox_iou(player.bbox, pose.bbox)
-            if iou > best_iou:
-                best_iou = iou
-                best_pose = pose
-        if best_pose is not None and best_iou >= iou_threshold:
-            player.skeleton = Skeleton(keypoints=best_pose.keypoints)
+            if iou >= iou_threshold:
+                candidates.append((iou, p_idx, pose_idx))
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+
+    matched_players: set[int] = set()
+    matched_poses: set[int] = set()
+    for _, p_idx, pose_idx in candidates:
+        if p_idx in matched_players or pose_idx in matched_poses:
+            continue
+        players[p_idx].skeleton = Skeleton(keypoints=poses[pose_idx].keypoints)
+        matched_players.add(p_idx)
+        matched_poses.add(pose_idx)
 
 
 def enrich_detections_with_numbers(
