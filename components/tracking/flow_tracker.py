@@ -230,14 +230,22 @@ class FlowTracker:
             future_embs: dict[int, np.ndarray] | None = None
             past_color_embs: dict[int, np.ndarray] | None = None
             future_color_embs: dict[int, np.ndarray] | None = None
+            past_vels: dict[int, np.ndarray] | None = None
+            future_vels: dict[int, np.ndarray] | None = None
             if tracks is not None:
-                past_embs, future_embs, past_color_embs, future_color_embs = self._compute_tracklet_embeddings(
+                (
+                    past_embs,
+                    future_embs,
+                    past_color_embs,
+                    future_color_embs,
+                    past_vels,
+                    future_vels,
+                ) = self._compute_tracklet_embeddings(
                     tracks,
                     det_list,
                     lookback,
                 )
                 lookback *= 2
-                self.w_app *= 0.8
 
             tracks = self._solve_pass(
                 det_list,
@@ -251,6 +259,8 @@ class FlowTracker:
                 future_embs,
                 past_color_embs,
                 future_color_embs,
+                past_vels,
+                future_vels,
                 pass_idx,
                 prev_tracks=tracks,
             )
@@ -281,26 +291,33 @@ class FlowTracker:
         dict[int, np.ndarray],
         dict[int, np.ndarray],
         dict[int, np.ndarray],
+        dict[int, np.ndarray],
+        dict[int, np.ndarray],
     ]:
-        """Directional mean embeddings (reid + color) for each tracked detection.
+        """Directional mean embeddings and velocities for each tracked detection.
 
         Returns
         -------
-        (past_embs, future_embs, past_color_embs, future_color_embs)
+        (past_embs, future_embs, past_color_embs, future_color_embs,
+         past_vels, future_vels)
             Reid and color embeddings averaged over a lookback window in
-            each direction along the track.
+            each direction along the track, plus directional velocity
+            estimates in court coordinates per frame.
         """
         past_embs: dict[int, np.ndarray] = {}
         future_embs: dict[int, np.ndarray] = {}
         past_color_embs: dict[int, np.ndarray] = {}
         future_color_embs: dict[int, np.ndarray] = {}
+        past_vels: dict[int, np.ndarray] = {}
+        future_vels: dict[int, np.ndarray] = {}
 
         for track in tracks:
             for pos, det_idx in enumerate(track):
                 past_start = max(0, pos - lookback)
+                past_slice = track[past_start : pos + 1]
                 past_reid: list[np.ndarray] = []
                 past_color: list[np.ndarray] = []
-                for s_idx in track[past_start : pos + 1]:
+                for s_idx in past_slice:
                     player = det_list[s_idx][1]
                     emb = player.reid_embedding if player.reid_embedding is not None else player.embedding
                     if emb is not None:
@@ -311,11 +328,15 @@ class FlowTracker:
                     past_embs[det_idx] = np.mean(past_reid, axis=0)
                 if past_color:
                     past_color_embs[det_idx] = np.mean(past_color, axis=0)
+                past_vel = self._directional_velocity(past_slice, det_list)
+                if past_vel is not None:
+                    past_vels[det_idx] = past_vel
 
                 future_end = min(len(track), pos + lookback + 1)
+                future_slice = track[pos:future_end]
                 future_reid: list[np.ndarray] = []
                 future_color: list[np.ndarray] = []
-                for s_idx in track[pos:future_end]:
+                for s_idx in future_slice:
                     player = det_list[s_idx][1]
                     emb = player.reid_embedding if player.reid_embedding is not None else player.embedding
                     if emb is not None:
@@ -326,8 +347,91 @@ class FlowTracker:
                     future_embs[det_idx] = np.mean(future_reid, axis=0)
                 if future_color:
                     future_color_embs[det_idx] = np.mean(future_color, axis=0)
+                future_vel = self._directional_velocity(future_slice, det_list)
+                if future_vel is not None:
+                    future_vels[det_idx] = future_vel
 
-        return past_embs, future_embs, past_color_embs, future_color_embs
+        return past_embs, future_embs, past_color_embs, future_color_embs, past_vels, future_vels
+
+    @staticmethod
+    def _directional_velocity(
+        track_slice: list[int],
+        det_list: list[tuple[int, object]],
+    ) -> np.ndarray | None:
+        velocities: list[np.ndarray] = []
+        prev_frame: int | None = None
+        prev_pos: np.ndarray | None = None
+
+        for det_idx in track_slice:
+            frame_id, player = det_list[det_idx]
+            court_pos = player.court_position
+            if court_pos is None:
+                continue
+            pos = np.asarray(court_pos, dtype=float)
+            if prev_frame is not None and prev_pos is not None:
+                dt = frame_id - prev_frame
+                if dt > 0:
+                    velocities.append((pos - prev_pos) / dt)
+            prev_frame = frame_id
+            prev_pos = pos
+
+        if not velocities:
+            return None
+        return np.mean(velocities, axis=0)
+
+    def _velocity_cost(
+        self,
+        i: int,
+        j: int,
+        det_list: list[tuple[int, object]],
+        past_vels: dict[int, np.ndarray] | None,
+        future_vels: dict[int, np.ndarray] | None,
+    ) -> float | None:
+        if past_vels is None and future_vels is None:
+            return None
+
+        frame_i, player_i = det_list[i]
+        frame_j, player_j = det_list[j]
+        gap = frame_j - frame_i
+        court_i = player_i.court_position
+        court_j = player_j.court_position
+        if gap <= 0 or court_i is None or court_j is None:
+            return None
+
+        pos_i = np.asarray(court_i, dtype=float)
+        pos_j = np.asarray(court_j, dtype=float)
+        allowed_motion = self.max_speed * gap / max(self.fps, 1e-6)
+        scale = max(0.5, allowed_motion)
+        costs: list[float] = []
+
+        vel_i = past_vels.get(i) if past_vels is not None else None
+        if vel_i is not None:
+            pred_j = pos_i + vel_i * gap
+            dist = float(np.linalg.norm(pred_j - pos_j))
+            x = min(dist / max(scale, 1e-6), 15.0)
+            costs.append(np.exp(x) - 1.0)
+
+        vel_j = future_vels.get(j) if future_vels is not None else None
+        if vel_j is not None:
+            pred_i = pos_j - vel_j * gap
+            dist = float(np.linalg.norm(pred_i - pos_i))
+            x = min(dist / max(scale, 1e-6), 15.0)
+            costs.append(np.exp(x) - 1.0)
+
+        if not costs:
+            return None
+        return float(np.mean(costs))
+
+    def _normalize_reid(self, d: float) -> float:
+        """Linearly map raw cosine distance to [0, 1] using calibrated same/diff means.
+
+        Distances at or below ``reid_norm_lo`` map to 0 (same identity);
+        distances at or above ``reid_norm_hi`` map to 1 (different identity).
+        """
+        lo, hi = self.reid_norm_lo, self.reid_norm_hi
+        if hi <= lo:
+            return d
+        return max(0.0, min(1.0, (d - lo) / (hi - lo)))
 
     @staticmethod
     def _color_cost(player_i, player_j) -> float:
@@ -356,7 +460,7 @@ class FlowTracker:
         emb_j = future_embs.get(j)
         if emb_i is None or emb_j is None:
             return None
-        d = cosine_dist(emb_i, emb_j)
+        d = self._normalize_reid(cosine_dist(emb_i, emb_j))
         cost = d * d
 
         if past_color_embs is not None and future_color_embs is not None:
@@ -382,6 +486,8 @@ class FlowTracker:
         future_embs: dict[int, np.ndarray] | None,
         past_color_embs: dict[int, np.ndarray] | None,
         future_color_embs: dict[int, np.ndarray] | None,
+        past_vels: dict[int, np.ndarray] | None,
+        future_vels: dict[int, np.ndarray] | None,
     ) -> int:
         """Add long-range occlusion edges validated by existing tracks.
 
@@ -485,6 +591,9 @@ class FlowTracker:
                             )
                             if ext is not None:
                                 cost += self.w_extended * ext
+                        vel_cost = self._velocity_cost(i, j, det_list, past_vels, future_vels)
+                        if vel_cost is not None:
+                            cost += self.w_velocity * vel_cost
 
                         mcf.add_edge(
                             _det_out(i, n_det),
@@ -513,6 +622,8 @@ class FlowTracker:
         future_embs: dict[int, np.ndarray] | None,
         past_color_embs: dict[int, np.ndarray] | None,
         future_color_embs: dict[int, np.ndarray] | None,
+        past_vels: dict[int, np.ndarray] | None,
+        future_vels: dict[int, np.ndarray] | None,
         pass_idx: int,
         prev_tracks: list[list[int]] | None = None,
     ) -> list[list[int]]:
@@ -588,6 +699,9 @@ class FlowTracker:
                                     )
                                     if ext is not None:
                                         cost += self.w_extended * ext
+                                vel_cost = self._velocity_cost(i, j, det_list, past_vels, future_vels)
+                                if vel_cost is not None:
+                                    cost += self.w_velocity * vel_cost
                                 mcf.add_edge(_det_out(i, n_det), _det_in(j, n_det), 1, cost)
                                 n_links += 1
 
@@ -627,6 +741,9 @@ class FlowTracker:
                                         )
                                         if ext is not None:
                                             cost += self.w_extended * ext
+                                    vel_cost = self._velocity_cost(i, j, det_list, past_vels, future_vels)
+                                    if vel_cost is not None:
+                                        cost += self.w_velocity * vel_cost
                                     mcf.add_edge(oof_node_i, _det_in(j, n_det), 1, cost)
                                     n_oof_links += 1
 
@@ -642,6 +759,8 @@ class FlowTracker:
                 future_embs,
                 past_color_embs,
                 future_color_embs,
+                past_vels,
+                future_vels,
             )
 
         logger.info(
@@ -690,12 +809,22 @@ class FlowTracker:
     # ------------------------------------------------------------------
 
     def _appearance_cost(self, player_i, player_j) -> float | None:
-        """Appearance-only cosine distance (None when either embedding is missing)."""
+        """Appearance-only cost (None when either embedding is missing).
+
+        When both detections carry a true reid embedding the raw cosine
+        distance is linearly normalised via ``_normalize_reid`` so that
+        same-identity pairs map to ~0 and different-identity pairs map
+        to ~1.  Colour-histogram fallback pairs are returned as-is.
+        """
+        has_reid = player_i.reid_embedding is not None and player_j.reid_embedding is not None
         emb_i = player_i.reid_embedding if player_i.reid_embedding is not None else player_i.embedding
         emb_j = player_j.reid_embedding if player_j.reid_embedding is not None else player_j.embedding
         if emb_i is None or emb_j is None:
             return None
-        return cosine_dist(emb_i, emb_j)
+        d = cosine_dist(emb_i, emb_j)
+        if has_reid:
+            d = self._normalize_reid(d)
+        return d
 
     def _link_cost(self, player_i, player_j, frame_gap: int, *, skip_penalty: bool = True) -> float | None:
         """Cost of linking two detections. Exponential spatial cost discourages teleportation."""

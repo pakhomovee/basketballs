@@ -15,10 +15,19 @@ from tqdm import tqdm
 
 from .dataset import PKSampler, SynergyReIDDataset, build_train_transform
 from .evaluate import evaluate
-from .losses import TripletLoss
+from .losses import ArcFaceLoss, TripletLoss
 from .model import ReIDModel
 
 logger = logging.getLogger(__name__)
+
+
+def _configure_logging(level: str) -> None:
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+        force=True,
+    )
 
 
 def _lr_scale(epoch: int, *, warmup_epochs: int, total_epochs: int, eta_min: float, base_lr: float) -> float:
@@ -85,7 +94,7 @@ def _run_epoch(
     model: ReIDModel,
     train_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
-    ce_loss: nn.Module,
+    id_loss: nn.Module,
     tri_loss: TripletLoss,
     *,
     epoch: int,
@@ -101,8 +110,12 @@ def _run_epoch(
         imgs = imgs.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
 
-        global_feat, logits = model(imgs)
-        loss_id = ce_loss(logits, labels) * id_loss_weight
+        global_feat, normed_bn_feat, logits = model(imgs)
+        # ArcFace operates on normalised features directly; CE on logits
+        if isinstance(id_loss, ArcFaceLoss):
+            loss_id = id_loss(normed_bn_feat, labels) * id_loss_weight
+        else:
+            loss_id = id_loss(logits, labels) * id_loss_weight
         loss_tri = tri_loss(global_feat, labels) * triplet_loss_weight
         loss = loss_id + loss_tri
 
@@ -169,14 +182,14 @@ def _has_eval_split(query_dir: Path, gallery_dir: Path) -> bool:
 def train(
     data_root: str,
     output_dir: str = "logs/reid",
-    epochs: int = 60,
+    epochs: int = 120,
     p: int = 16,
     k: int = 4,
     lr: float = 3.5e-4,
     weight_decay: float = 5e-4,
     warmup_epochs: int = 10,
-    triplet_margin: float = 0.3,
-    label_smooth: float = 0.1,
+    arcface_s: float = 30.0,
+    arcface_m: float = 0.3,
     id_loss_weight: float = 1.0,
     triplet_loss_weight: float = 1.0,
     eval_interval: int = 10,
@@ -198,15 +211,31 @@ def train(
     test_query = data_root / "reid_test" / "query"
     test_gallery = data_root / "reid_test" / "gallery"
 
+    if not train_dir.exists():
+        raise FileNotFoundError(
+            f"Training directory not found: {train_dir}. "
+            "Expected --data_root to contain reid_training/ and optionally reid_test/query and reid_test/gallery/."
+        )
+
     logger.info("Loading training data from %s", train_dir)
     train_ds, train_loader = _create_train_loader(train_dir, p=p, k=k, num_workers=num_workers)
     logger.info("Training set: %d images, %d identities", len(train_ds), train_ds.num_pids)
 
     model = ReIDModel(num_classes=train_ds.num_pids, pretrained=True).to(device)
-    ce_loss = nn.CrossEntropyLoss(label_smoothing=label_smooth).to(device)
-    tri_loss = TripletLoss(margin=triplet_margin).to(device)
+    id_loss = ArcFaceLoss(
+        num_classes=train_ds.num_pids, feature_dim=2048, s=arcface_s, m=arcface_m,
+    ).to(device)
+    tri_loss = TripletLoss().to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    # Adam is stable for fine-tuning pretrained features.  The ArcFace head
+    # starts from random so it gets a 10× higher LR than the backbone.
+    optimizer = torch.optim.Adam(
+        [
+            {"params": model.parameters(), "lr": lr},
+            {"params": id_loss.parameters(), "lr": lr * 10},
+        ],
+        weight_decay=weight_decay,
+    )
     scheduler = _create_scheduler(optimizer, lr=lr, warmup_epochs=warmup_epochs, total_epochs=epochs)
     has_eval_split = _has_eval_split(test_query, test_gallery)
     if not has_eval_split:
@@ -216,12 +245,11 @@ def train(
     iters_per_epoch = len(train_loader)
 
     for epoch in range(epochs):
-        scheduler.step(epoch)
         stats, elapsed = _run_epoch(
             model,
             train_loader,
             optimizer,
-            ce_loss,
+            id_loss,
             tri_loss,
             epoch=epoch,
             device=device,
@@ -229,6 +257,7 @@ def train(
             triplet_loss_weight=triplet_loss_weight,
         )
         _log_epoch(epoch, epochs, optimizer, stats, iters_per_epoch, elapsed)
+        scheduler.step()
 
         if has_eval_split and ((epoch + 1) % eval_interval == 0 or epoch == epochs - 1):
             best_mAP = _evaluate_and_maybe_save(
@@ -245,3 +274,48 @@ def train(
     logger.info("Training done. Final model saved to %s", final_path)
 
     return model
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Train ReID model (ArcFace + triplet)")
+    parser.add_argument("--data_root", type=str, required=True, help="Path to dataset root (with reid_training/ and reid_test/)")
+    parser.add_argument("--output_dir", type=str, default="logs/reid", help="Output directory for logs and checkpoints")
+    parser.add_argument("--epochs", type=int, default=120)
+    parser.add_argument("--p", type=int, default=16, help="Number of identities per batch")
+    parser.add_argument("--k", type=int, default=4, help="Number of images per identity per batch")
+    parser.add_argument("--lr", type=float, default=3.5e-4)
+    parser.add_argument("--weight_decay", type=float, default=5e-4)
+    parser.add_argument("--warmup_epochs", type=int, default=10)
+    parser.add_argument("--arcface_s", type=float, default=30.0)
+    parser.add_argument("--arcface_m", type=float, default=0.3)
+    parser.add_argument("--id_loss_weight", type=float, default=1.0)
+    parser.add_argument("--triplet_loss_weight", type=float, default=1.0)
+    parser.add_argument("--eval_interval", type=int, default=10)
+    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--log_level", type=str, default="INFO", help="Python logging level: DEBUG, INFO, WARNING, ERROR")
+    args = parser.parse_args()
+
+    _configure_logging(args.log_level)
+    logger.info("Starting ReID training")
+    logger.info("data_root=%s output_dir=%s device=%s epochs=%d p=%d k=%d", args.data_root, args.output_dir, args.device, args.epochs, args.p, args.k)
+
+    train(
+        data_root=args.data_root,
+        output_dir=args.output_dir,
+        epochs=args.epochs,
+        p=args.p,
+        k=args.k,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        warmup_epochs=args.warmup_epochs,
+        arcface_s=args.arcface_s,
+        arcface_m=args.arcface_m,
+        id_loss_weight=args.id_loss_weight,
+        triplet_loss_weight=args.triplet_loss_weight,
+        eval_interval=args.eval_interval,
+        device=args.device,
+        num_workers=args.num_workers,
+    )

@@ -25,9 +25,9 @@ class BNNeck(nn.Module):
 class ReIDModel(nn.Module):
     """ResNet-50 backbone → 2048-d global feature → BNNeck → classifier.
 
-    During training returns (global_feat, logits) for joint triplet + CE loss.
-    The triplet loss uses global features, while the classifier consumes BNNeck
-    features internally to produce logits.
+    During training returns ``(global_feat, normed_bn_feat, logits)``.
+    The triplet loss should use the raw global features, while ID loss operates
+    on BNNeck features (optionally L2-normalised for ArcFace).
     During inference returns L2-normalised features for distance computation.
     """
 
@@ -53,10 +53,11 @@ class ReIDModel(nn.Module):
     def forward(self, x: torch.Tensor):
         global_feat = self._global_features(x)
         bn_feat = self.bnneck(global_feat)
+        normed = F.normalize(bn_feat, p=2, dim=1)
         if self.training:
             logits = self.classifier(bn_feat)
-            return global_feat, logits
-        return F.normalize(bn_feat, p=2, dim=1)
+            return global_feat, normed, logits
+        return normed
 
     @torch.no_grad()
     def extract_features(self, x: torch.Tensor) -> torch.Tensor:

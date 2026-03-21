@@ -45,19 +45,38 @@ def _scan_samples(root: Path) -> list[Sample]:
     return samples
 
 
+def _to_float_tensor(image: np.ndarray) -> torch.Tensor:
+    """Convert a (H, W, C) uint8 BGR numpy array to a (C, H, W) float32 tensor in [0, 1]."""
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    image = cv2.resize(image, (INPUT_SIZE[1], INPUT_SIZE[0]))
+    return torch.from_numpy(image.astype(np.float32) / 255.0).permute(2, 0, 1)
+
+
 def load_reid_image(path: str | Path) -> torch.Tensor:
+    """Load, resize, and normalize a player-crop image (used for eval/inference)."""
     image = cv2.imread(str(path))
     if image is None:
         raise FileNotFoundError(f"Could not load image: {path}")
     return preprocess_reid_image(image)
 
 
+def _load_reid_image_raw(path: str | Path) -> torch.Tensor:
+    """Load and resize a player-crop image as a [0, 1] float tensor — no normalization.
+
+    Used during training so that colour augmentations operate on natural pixel values
+    before the normalization step inside :func:`build_train_transform`.
+    """
+    image = cv2.imread(str(path))
+    if image is None:
+        raise FileNotFoundError(f"Could not load image: {path}")
+    return _to_float_tensor(image)
+
+
 def preprocess_reid_image(image: np.ndarray) -> torch.Tensor:
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    image = cv2.resize(image, (INPUT_SIZE[1], INPUT_SIZE[0]))
-    image = image.astype(np.float32) / 255.0
-    image = (image - IMAGENET_MEAN_ARRAY) / IMAGENET_STD_ARRAY
-    return torch.from_numpy(image).permute(2, 0, 1).float()
+    tensor = _to_float_tensor(image)
+    mean = torch.tensor(IMAGENET_MEAN).view(3, 1, 1)
+    std = torch.tensor(IMAGENET_STD).view(3, 1, 1)
+    return (tensor - mean) / std
 
 
 class _BaseReIDImageDataset(Dataset):
@@ -73,10 +92,19 @@ class _BaseReIDImageDataset(Dataset):
 
 
 def build_train_transform(flip_prob: float = 0.5, erase_prob: float = 0.5) -> Callable[[torch.Tensor], torch.Tensor]:
+    """Return a transform pipeline for training.
+
+    Expects a [0, 1] float tensor as input.  Colour augmentations run first
+    (on natural pixel values), then spatial augmentations, then normalization.
+    """
     return transforms.Compose(
         [
             transforms.RandomHorizontalFlip(p=flip_prob),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.05),
+            transforms.Pad(10),
+            transforms.RandomCrop((INPUT_SIZE[0], INPUT_SIZE[1])),
             transforms.RandomErasing(p=erase_prob, value="random"),
+            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
         ]
     )
 
@@ -112,7 +140,9 @@ class SynergyReIDDataset(_BaseReIDImageDataset):
 
     def __getitem__(self, index: int):
         fname, pid, seq = self.samples[index]
-        img = self._load_image(fname)
+        # Load without normalization so ColorJitter operates on natural [0, 1]
+        # pixel values. build_train_transform() applies Normalize at the end.
+        img = _load_reid_image_raw(self.root / fname)
 
         if self.transform is not None:
             img = self.transform(img)
