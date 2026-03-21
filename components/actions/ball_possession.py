@@ -308,6 +308,7 @@ def assign_ball_possession_soft_dribble(
         balls_in_frame = ball_detections.get(frame_id, [])
         if not balls_in_frame:
             continue
+        print(balls_in_frame)
         best_ball = max(balls_in_frame, key=lambda b: b.confidence or 0.0)
         if len(best_ball.bbox) < 4:
             continue
