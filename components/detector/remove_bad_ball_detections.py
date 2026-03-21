@@ -25,7 +25,7 @@ def remove_bad_ball_detections(
     ball_detections_list.sort(key=lambda x: x[0])
     n = len(ball_detections_list)
     if n == 0:
-        return ball_detections
+        return {}
 
     def _project_norm_to_court(x_norm: float, y_norm: float, H) -> tuple[float, float] | None:
         """Project (x_norm,y_norm,1) using homography H: [0,1]^2 -> [-0.5,0.5]^2."""
