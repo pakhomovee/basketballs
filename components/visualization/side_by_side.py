@@ -125,7 +125,7 @@ def _draw_pass_overlay(
         return
     # Oldest at top of stack, newest at bottom (so when a new pass appears, older ones shift up)
     active.sort(key=lambda p: p.frame)
-    active = active[-_PASS_MAX_STACK :]
+    active = active[-_PASS_MAX_STACK:]
 
     lines: list[tuple[str, tuple[int, int, int]]] = []
     n = len(active)
