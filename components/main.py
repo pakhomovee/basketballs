@@ -15,9 +15,9 @@ from reidentification import extract_reid_embeddings
 from common.classes import CourtType
 from common.logger import get_logger
 from common.utils.utils import download
-from detector import Detector, enrich_detections_with_numbers, enrich_players_with_pose, get_video_ball_detections
-from detector.remove_bad_ball_detections import remove_bad_ball_detections
+from detector import Detector, enrich_detections_with_numbers, enrich_players_with_pose
 from detector.interpolate_ball_detections import linear_interpolate_ball_detections
+from ball_detector.detector import WASBBallDetector
 from actions.ball_possession import (
     assign_ball_possession_soft_dribble,
     greedy_possession_segments_soft_dribble,
@@ -34,6 +34,7 @@ DETECTOR_MODEL_PATH = MODELS_DIR / "best-4.pt"
 PARSEQ_MODEL_PATH = MODELS_DIR / "parseq_flex.ckpt"
 REID_MODEL_PATH = MODELS_DIR / "reid_model.pth"
 SEG_MODEL_PATH = MODELS_DIR / "seg-model.pt"
+WASB_MODEL_PATH = MODELS_DIR / "wasb_basketball_best.pth.tar"
 DEFAULT_REID_WEIGHTS = str(REID_MODEL_PATH)
 
 
@@ -48,6 +49,8 @@ def _ensure_default_models() -> None:
         download("https://disk.yandex.ru/d/Ak2skkMBdVCqmQ", REID_MODEL_PATH.name, str(MODELS_DIR))
     if not SEG_MODEL_PATH.exists():
         download("https://disk.yandex.ru/d/dpjzmKkadg-nZg", SEG_MODEL_PATH.name, str(MODELS_DIR))
+    if not WASB_MODEL_PATH.exists():
+        download("https://disk.yandex.ru/d/JZQN5HEOKOegog", WASB_MODEL_PATH.name, str(MODELS_DIR))
 
 
 def _extract_embeddings(video_path, detections, enable_reid=True):
@@ -133,23 +136,16 @@ def main(
     if with_pose:
         enrich_players_with_pose(video_path, players_detections)
 
-    raw_ball_detections = get_video_ball_detections(all_detections)
-
     # Homography
 
     court_detector = CourtDetector()
-    homographies = court_detector.run(video_path, players_detections, court_type)
+    court_detector.run(video_path, players_detections, court_type)
 
-    # Ball detection
-    frame_size = _get_video_frame_size(video_path)
+    # Ball detection (WASB)
+    wasb_detector = WASBBallDetector()
+    ball_detections = wasb_detector.detect_video(video_path)
 
-    kept_ball_by_frame = remove_bad_ball_detections(
-        raw_ball_detections,
-        frame_size=frame_size,
-        homographies=homographies,
-    )
-
-    interpolated_ball_by_frame = linear_interpolate_ball_detections(kept_ball_by_frame)
+    interpolated_ball_by_frame = linear_interpolate_ball_detections(ball_detections)
     possession_ball_detections = {frame_id: [ball] for frame_id, ball in interpolated_ball_by_frame.items()}
 
     # Tracker
@@ -184,6 +180,8 @@ def main(
     print(f"Saved 2D video to {output_2d_path}")
 
     if output_both is not None:
+        if not Path(output_both).suffix:
+            output_both += ".mp4"
         make_side_by_side_video(
             video_path,
             output_2d_path,
