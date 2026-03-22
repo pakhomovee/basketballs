@@ -3,7 +3,6 @@ import os
 from pathlib import Path
 import cv2
 
-from cache import load_detections_cache, save_detections_cache
 from court_detector.court_detector import CourtDetector
 from team_clustering.embedding import DEFAULT_SEG_MODEL, extract_player_embeddings
 from team_clustering.mock_detector import MockDetector
@@ -20,9 +19,10 @@ from detector.interpolate_ball_detections import linear_interpolate_ball_detecti
 from ball_detector.detector import WASBBallDetector
 from actions.ball_possession import (
     assign_ball_possession_soft_dribble,
-    greedy_possession_segments_soft_dribble,
     apply_possession_segments,
+    greedy_possession_segments_soft_dribble,
 )
+from actions.passes import find_team_passes
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -30,7 +30,7 @@ COMPONENTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = COMPONENTS_DIR.parent
 MODELS_DIR = REPO_ROOT / "models"
 COURT_MODEL_PATH = MODELS_DIR / "court_detection_model.pt"
-DETECTOR_MODEL_PATH = MODELS_DIR / "best-4.pt"
+DETECTOR_MODEL_PATH = MODELS_DIR / "detector_model.pt"
 PARSEQ_MODEL_PATH = MODELS_DIR / "parseq_flex.ckpt"
 REID_MODEL_PATH = MODELS_DIR / "reid_model.pth"
 SEG_MODEL_PATH = MODELS_DIR / "seg-model.pt"
@@ -42,7 +42,7 @@ def _ensure_default_models() -> None:
     if not COURT_MODEL_PATH.exists():
         download("https://disk.yandex.ru/d/VRabl680FfKBog", COURT_MODEL_PATH.name, str(MODELS_DIR))
     if not DETECTOR_MODEL_PATH.exists():
-        download("https://disk.yandex.ru/d/MAGAbYxRFEvX6w", DETECTOR_MODEL_PATH.name, str(MODELS_DIR))
+        download("https://disk.yandex.ru/d/KdtL0zaQQlI5fg", DETECTOR_MODEL_PATH.name, str(MODELS_DIR))
     if not PARSEQ_MODEL_PATH.exists():
         download("https://disk.yandex.ru/d/QucoCUmnUbLMHw", PARSEQ_MODEL_PATH.name, str(MODELS_DIR))
     if not REID_MODEL_PATH.exists():
@@ -80,6 +80,19 @@ def _get_video_frame_width(video_path: str) -> float | None:
         return width if width > 0 else None
     except Exception:
         return None
+
+
+def _get_video_fps(video_path: str) -> float:
+    """Return FPS of the video, or 25.0 if unavailable."""
+    try:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return 25.0
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        cap.release()
+        return fps if fps > 0 else 25.0
+    except Exception:
+        return 25.0
 
 
 def _get_video_frame_size(video_path: str) -> tuple[int, int] | None:
@@ -123,7 +136,6 @@ def main(
     """
     get_logger().clear()
     _ensure_default_models()
-    possession_ball_detections = {}
 
     # Detector
 
@@ -160,10 +172,11 @@ def main(
 
     # Possession
 
-    if possession_ball_detections:
-        assign_ball_possession_soft_dribble(players_detections, possession_ball_detections)
-        possession_segments = greedy_possession_segments_soft_dribble(players_detections)
-        apply_possession_segments(players_detections, possession_segments)
+    video_fps = _get_video_fps(video_path)
+    assign_ball_possession_soft_dribble(players_detections, possession_ball_detections)
+    possession_segments = greedy_possession_segments_soft_dribble(players_detections, fps=video_fps)
+    apply_possession_segments(players_detections, possession_segments)
+    pass_events = find_team_passes(possession_segments, players_detections)
 
     # Smoothing
 
@@ -188,6 +201,7 @@ def main(
             output_both,
             detections=players_detections,
             ball_detections=possession_ball_detections,
+            passes=pass_events,
         )
 
 

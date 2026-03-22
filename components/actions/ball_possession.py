@@ -1,9 +1,20 @@
 from __future__ import annotations
 
 from collections import Counter
+from typing import Sequence
 
 from common.classes.ball import BallDetections
 from common.classes.player import Player, PlayersDetections
+from common.classes.possession_segment import PossessionSegment
+
+_HALF_SECOND = 0.5
+
+
+def _half_second_frame_count(fps: float) -> int:
+    """Number of frames in 0.5 s at the given FPS (at least 1)."""
+    if fps <= 0:
+        return 1
+    return max(1, int(round(_HALF_SECOND * fps)))
 
 
 def _get_hand_points(
@@ -39,17 +50,15 @@ def assign_ball_possession(
     wrist_conf_threshold: float = 0.1,
 ) -> PlayersDetections:
     """
-    Compute raw (soft) ball possession confidence for each frame.
+    Per-frame ball possession from hand–ball distance (skeleton wrists vs ball center).
 
     For each frame:
-      - reset all players `has_ball_raw=False` and `possession_conf_raw=0.0`
-      - pick the most confident ball detection in that frame
-      - for each player, use nearest wrist distance to ball center and convert to confidence:
-            conf = max(0, 1 - dist / max_hand_ball_dist)
-      - store confidence in `player.possession_conf_raw`
+      - reset `is_possession` / `is_possession_raw` to False for all players in the frame
+      - pick the most confident ball detection
+      - for each player with valid wrist keypoints, if nearest wrist is within
+        `max_hand_ball_dist` of the ball center, set both flags True
 
-    This stage does not force a unique owner; multiple players may have positive confidence.
-    For compatibility, `has_ball_raw` is set True when `possession_conf_raw > 0`.
+    Multiple players may have possession True on the same frame.
 
     Mutates `players_detections` in place and also returns it.
     """
@@ -57,8 +66,8 @@ def assign_ball_possession(
 
     for frame_id, players in players_detections.items():
         for player in players:
-            player.has_ball_raw = False
-            player.possession_conf_raw = 0.0
+            player.is_possession = False
+            player.is_possession_raw = False
 
         balls_in_frame = ball_detections.get(frame_id, [])
         if not balls_in_frame:
@@ -83,21 +92,16 @@ def assign_ball_possession(
             if player_best_sq <= max_dist_sq:
                 dist = player_best_sq**0.5
                 conf = max(0.0, 1.0 - dist / max_hand_ball_dist)
-                player.possession_conf_raw = conf
-                player.has_ball_raw = conf > 0.0
-
-    # Keep legacy combined flag for backward compatibility.
-    for players in players_detections.values():
-        for p in players:
-            p.has_ball = p.has_ball_raw or p.has_ball_post
+                if conf > 0.0:
+                    player.is_possession = True
+                    player.is_possession_raw = True
 
     return players_detections
 
 
 def _frame_conf_map(players: list[Player]) -> dict[int, float]:
-    """Return per-frame possession confidence map: player_id -> confidence (>0 only)."""
-    conf = {p.player_id: float(p.possession_conf_raw) for p in players if p.possession_conf_raw > 0.0}
-    return conf
+    """Per-frame weights for segment scoring: player_id -> 1.0 if is_possession else omitted."""
+    return {p.player_id: 1.0 for p in players if p.is_possession}
 
 
 def _segment_ok(
@@ -161,14 +165,15 @@ def _segment_ok(
 def greedy_possession_segments(
     players_detections: PlayersDetections,
     *,
-    min_length: int = 30,
+    fps: float,
     other_max_share: float = 0.2,
-    window_size: int = 30,
-) -> list[dict]:
+) -> list[PossessionSegment]:
     """
     Greedily extract possession segments from start to end of video.
 
-    Uses `player.possession_conf_raw` in each frame (set by `assign_ball_possession`).
+    Uses `player.is_possession` in each frame (set by `assign_ball_possession`).
+    ``min_length`` and ``window_size`` are both set to half a second in frames: ``round(0.5 * fps)``.
+
     At each start position, picks the longest valid segment [start, end] such that:
       - segment length >= min_length
       - all players except one have total confidence <= other_max_share * segment_length.
@@ -179,32 +184,26 @@ def greedy_possession_segments(
     If no valid segment starts at current frame, advances start by 1 frame.
 
     Returns:
-        list of dicts:
-          {
-            "start_frame": int,
-            "end_frame": int,
-            "owner_player_id": int,
-            "length": int,
-            "owner_share": float,
-          }
+        List of `PossessionSegment` instances.
     """
+    min_length = _half_second_frame_count(fps)
+    window_size = min_length
+
     frame_ids = sorted(players_detections.keys())
     if not frame_ids:
         return []
 
     frame_confs = [_frame_conf_map(players_detections[fid]) for fid in frame_ids]
     n = len(frame_ids)
-    segments: list[dict] = []
+    segments: list[PossessionSegment] = []
 
     i = 0
     while i < n:
         best_j = -1
         best_owner: int | None = None
-        best_cnt = Counter()
-
         # longest available segment starting at i
         for j in range(n - 1, i + min_length - 2, -1):
-            ok, owner, cnt = _segment_ok(
+            ok, owner, _ = _segment_ok(
                 frame_confs[i : j + 1],
                 min_length=min_length,
                 other_max_share=other_max_share,
@@ -213,23 +212,18 @@ def greedy_possession_segments(
             if ok and owner is not None:
                 best_j = j
                 best_owner = owner
-                best_cnt = cnt
                 break
 
         if best_j == -1 or best_owner is None:
             i += 1
             continue
 
-        length = best_j - i + 1
-        owner_frames = best_cnt.get(best_owner, 0.0)
         segments.append(
-            {
-                "start_frame": frame_ids[i],
-                "end_frame": frame_ids[best_j],
-                "owner_player_id": best_owner,
-                "length": length,
-                "owner_share": owner_frames / float(length),
-            }
+            PossessionSegment(
+                start_frame=frame_ids[i],
+                end_frame=frame_ids[best_j],
+                owner_player_id=best_owner,
+            )
         )
         i = best_j + 1
 
@@ -238,45 +232,33 @@ def greedy_possession_segments(
 
 def apply_possession_segments(
     players_detections: PlayersDetections,
-    segments: list[dict],
+    segments: Sequence[PossessionSegment],
 ) -> PlayersDetections:
     """
-    Rewrite per-frame postprocessed possession flags using extracted possession segments.
+    Final `is_possession` from segments only.
 
-    Behavior:
-      - reset `has_ball_post=False` and `possession_conf_post=0.0` for all players
-      - for each segment, set `has_ball_post=True` and `possession_conf_post=1.0`
-        only for `owner_player_id`
-        in frames [start_frame, end_frame]
+    Sets `is_possession=False` for everyone on **all** frames (drops pre-segment flags).
+    `is_possession_raw` is left unchanged (pre-segment dribble/ball signal).
+
+    Then on each segment frame sets `is_possession=True` only for `owner_player_id`.
 
     Mutates `players_detections` in place and also returns it.
     """
-    # Reset postprocessed flags first.
     for players in players_detections.values():
         for p in players:
-            p.has_ball_post = False
-            p.possession_conf_post = 0.0
+            p.is_possession = False
 
     if not segments:
         return players_detections
 
-    # Fast frame access by frame id.
     for seg in segments:
-        start = int(seg["start_frame"])
-        end = int(seg["end_frame"])
-        owner_id = int(seg["owner_player_id"])
+        start, end, owner_id = seg.start_frame, seg.end_frame, seg.owner_player_id
         if end < start:
             continue
         for frame_id in range(start, end + 1):
             players = players_detections.get(frame_id, [])
             for p in players:
-                p.has_ball_post = p.player_id == owner_id
-                p.possession_conf_post = 1.0 if p.player_id == owner_id else 0.0
-
-    # Keep legacy combined flag for backward compatibility.
-    for players in players_detections.values():
-        for p in players:
-            p.has_ball = p.has_ball_raw or p.has_ball_post
+                p.is_possession = p.player_id == owner_id
 
     return players_detections
 
@@ -289,21 +271,18 @@ def assign_ball_possession_soft_dribble(
     min_expand_px: int = 3,
 ) -> PlayersDetections:
     """
-    Alternative raw possession based only on `is_dribble`.
+    Per-frame possession signal for segmentation (dribble + ball-in-single-bbox).
 
-    This variant intentionally ignores skeletons and hand distance:
-      - if player.is_dribble is True -> has_ball_raw = True
-      - else -> has_ball_raw = False
+    Writes `is_possession` and `is_possession_raw` identically each frame. Later,
+    ``apply_possession_segments`` clears and resets only `is_possession` from segments.
 
-    Additional override rule:
-      - if ball center is inside expanded bbox of exactly one player in frame,
-        this player becomes the only raw owner for that frame.
+    Mutates `players_detections` in place and also returns it.
     """
     for frame_id, players in players_detections.items():
         for player in players:
-            player.has_ball_raw = bool(getattr(player, "is_dribble", False))
-            # Keep legacy field populated, but binary (no confidence weighting).
-            player.possession_conf_raw = 1.0 if player.has_ball_raw else 0.0
+            v = bool(getattr(player, "is_dribble", False))
+            player.is_possession = v
+            player.is_possession_raw = v
 
         balls_in_frame = ball_detections.get(frame_id, [])
         if not balls_in_frame:
@@ -330,17 +309,12 @@ def assign_ball_possession_soft_dribble(
             if ex1 <= ball_cx <= ex2 and ey1 <= ball_cy <= ey2:
                 owners.append(player)
 
-        # If ball is inside exactly one expanded player bbox, make it unique owner.
         if len(owners) == 1:
             owner_id = owners[0].player_id
             for player in players:
-                player.has_ball_raw = player.player_id == owner_id
-                player.possession_conf_raw = 1.0 if player.has_ball_raw else 0.0
-
-    # Keep legacy combined flag for backward compatibility.
-    for players in players_detections.values():
-        for p in players:
-            p.has_ball = p.has_ball_raw or p.has_ball_post
+                is_owner = player.player_id == owner_id
+                player.is_possession = is_owner
+                player.is_possession_raw = is_owner
 
     return players_detections
 
@@ -349,8 +323,8 @@ def _segment_ok_soft(
     frame_hits: list[dict[int, int]],
     min_length: int,
     other_max_share: float,
-    window_size: int = 40,
-    min_owner_share: float = 0.55,
+    window_size: int,
+    min_owner_share: float,
 ) -> tuple[bool, int | None, Counter]:
     """
     Softer segment validation than `_segment_ok`.
@@ -409,34 +383,36 @@ def _segment_ok_soft(
 def greedy_possession_segments_soft_dribble(
     players_detections: PlayersDetections,
     *,
-    min_length: int = 40,
+    fps: float,
     other_max_share: float = 0.35,
-    window_size: int = 40,
     min_owner_share: float = 0.55,
-) -> list[dict]:
+) -> list[PossessionSegment]:
     """
-    Greedy segment extraction over dribble-only binary raw possession.
+    Greedy segment extraction from per-frame ``player.is_possession`` (after
+    ``assign_ball_possession_soft_dribble``). Final flags come from ``apply_possession_segments``.
 
-    Designed for output of `assign_ball_possession_soft_dribble`.
+    ``min_length`` and ``window_size`` are both set to half a second in frames (same as
+    ``greedy_possession_segments``): ``round(0.5 * fps)`` (at least 1 frame).
     """
+    half = _half_second_frame_count(fps)
+    min_length = half
+    window_size = half
+
     frame_ids = sorted(players_detections.keys())
     if not frame_ids:
         return []
 
-    frame_hits = [
-        {p.player_id: 1 for p in players_detections[fid] if getattr(p, "has_ball_raw", False)} for fid in frame_ids
-    ]
+    frame_hits = [{p.player_id: 1 for p in players_detections[fid] if p.is_possession} for fid in frame_ids]
     n = len(frame_ids)
-    segments: list[dict] = []
+    segments: list[PossessionSegment] = []
 
     i = 0
     while i < n:
         best_j = -1
         best_owner: int | None = None
-        best_cnt = Counter()
 
         for j in range(n - 1, i + min_length - 2, -1):
-            ok, owner, cnt = _segment_ok_soft(
+            ok, owner, _ = _segment_ok_soft(
                 frame_hits[i : j + 1],
                 min_length=min_length,
                 other_max_share=other_max_share,
@@ -446,26 +422,18 @@ def greedy_possession_segments_soft_dribble(
             if ok and owner is not None:
                 best_j = j
                 best_owner = owner
-                best_cnt = cnt
                 break
 
         if best_j == -1 or best_owner is None:
             i += 1
             continue
 
-        length = best_j - i + 1
-        owner_hits = best_cnt.get(best_owner, 0)
-        total_hits = sum(best_cnt.values())
-        owner_share = (owner_hits / total_hits) if total_hits > 0 else 0.0
-
         segments.append(
-            {
-                "start_frame": frame_ids[i],
-                "end_frame": frame_ids[best_j],
-                "owner_player_id": best_owner,
-                "length": length,
-                "owner_share": owner_share,
-            }
+            PossessionSegment(
+                start_frame=frame_ids[i],
+                end_frame=frame_ids[best_j],
+                owner_player_id=best_owner,
+            )
         )
         i = best_j + 1
 

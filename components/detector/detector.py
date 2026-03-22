@@ -20,7 +20,7 @@ from detector.number_recognizer_parseq import recognize_numbers_in_frame
 class Detector:
     def __init__(
         self,
-        model_path: str | Path = Path(__file__).parent.parent.parent / "models" / "best-4.pt",
+        model_path: str | Path = Path(__file__).parent.parent.parent / "models" / "detector_model.pt",
         conf_threshold: float = 0.1,
     ):
         self.model = YOLO(model_path)
@@ -245,7 +245,6 @@ def get_frame_number_detections(
     conf_threshold: float = 0.5,
     nms_iou_threshold: float = 0.9,
     ocr_conf_threshold: float = 0.999,
-    save_crops_dir: str | Path | None = None,
 ) -> list[Number]:
     number_detections = [d for d in frame_detections.detections if d.class_id == 1 and d.confidence >= conf_threshold]
     number_detections = _nms_detections(number_detections, iou_threshold=nms_iou_threshold)
@@ -255,7 +254,5 @@ def get_frame_number_detections(
             frame,
             number_detections,
             ocr_conf_threshold=ocr_conf_threshold,
-            save_crops_dir=save_crops_dir,
-            frame_id=frame_detections.frame_id,
         )
     return number_detections

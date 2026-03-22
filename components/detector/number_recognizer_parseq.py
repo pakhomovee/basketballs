@@ -28,7 +28,6 @@ _PARSEQ_ROOT = _REPO_ROOT / "components" / "str" / "parseq"
 _model = None
 _transform = None
 _device = "cuda"
-_save_crop_counter = 0
 
 
 def _ensure_parseq_path():
@@ -157,8 +156,6 @@ def recognize_numbers_in_frame(
     *,
     padding: int = 5,
     ocr_conf_threshold: float = 0.999,
-    save_crops_dir: str | Path | None = None,
-    frame_id: int | None = None,
     checkpoint_path: str | Path | None = None,
 ) -> List[Number]:
     """
@@ -169,19 +166,13 @@ def recognize_numbers_in_frame(
         number_detections: list of detections with bbox [x1, y1, x2, y2].
         padding: pixels to expand bbox when cropping (typically 2–5).
         ocr_conf_threshold: minimum confidence (0.0–1.0). Below this, num is not set.
-        save_crops_dir: if set, save each preprocessed crop to this directory.
-        frame_id: optional frame index for saved filenames.
         checkpoint_path: path to parseq checkpoint (e.g. models/parseq.pt). Default: REPO_ROOT/models/parseq.pt.
 
     Returns:
         The same list `number_detections` with `num` filled (int 0–99 or None).
     """
-    global _model, _transform, _save_crop_counter
+    global _model, _transform
     _get_model(checkpoint_path)
-
-    if save_crops_dir is not None:
-        save_path = Path(save_crops_dir)
-        save_path.mkdir(parents=True, exist_ok=True)
 
     h, w = frame.shape[:2]
     for i, number in enumerate(number_detections):
@@ -217,14 +208,4 @@ def recognize_numbers_in_frame(
                 number.confidence = sum(confs) / len(confs)
         except Exception:
             number.num = None
-        if save_crops_dir is not None:
-            if frame_id is not None:
-                base = f"frame_{frame_id:06d}_crop_{i:02d}"
-            else:
-                base = f"call_{_save_crop_counter:06d}_crop_{i:02d}"
-            num_suffix = f"_num_{number.num}" if number.num is not None else "_num_None"
-            cv2.imwrite(str(save_path / f"{base}{num_suffix}.png"), preprocessed)
-            cv2.imwrite(str(save_path / f"{base}{num_suffix}_raw.png"), crop)
-    if save_crops_dir is not None and frame_id is None:
-        _save_crop_counter += 1
     return number_detections
