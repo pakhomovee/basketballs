@@ -109,7 +109,6 @@ def enrich_detections_with_numbers(
     referee_conf_threshold: float = 0.25,
     number_conf_threshold: float = 0.25,
     ocr_conf_threshold: float = 0.999,
-    save_crops_dir: str | Path | None = None,
 ) -> tuple[PlayersDetections, RefereesDetections, NumberDetections]:
     """
     Run number recognition on each frame and assign numbers to players.
@@ -138,7 +137,6 @@ def enrich_detections_with_numbers(
                 frame=frame,
                 conf_threshold=number_conf_threshold,
                 ocr_conf_threshold=ocr_conf_threshold,
-                save_crops_dir=save_crops_dir,
             )
             idx += 1
     finally:

@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 
 from common.logger import get_logger
+from common.classes.pass_event import PassEvent
 from visualization.skeleton import draw_skeleton
 
 # Logs panel dimensions
@@ -32,6 +33,22 @@ _TEAM_UNKNOWN_COLOR = (0, 255, 0)  # green
 # BGR color for the jersey number box (top-right of player bbox)
 _NUMBER_BOX_COLOR = (0, 0, 255)  # bright red
 _NUMBER_BOX_PAD = 4
+
+# Pass overlay (top of top / real-camera view)
+_PASS_FONT = cv2.FONT_HERSHEY_SIMPLEX
+_PASS_FONT_SCALE = 0.62
+_PASS_THICKNESS = 1
+# How long the pass banner stays visible (frames before/after pass frame)
+_PASS_FRAMES_BEFORE = 12
+_PASS_FRAMES_AFTER = 55
+_PASS_LINE_HEIGHT = 26
+_PASS_BAR_PADDING = 10
+_PASS_MAX_STACK = 6
+# Semi-transparent dark tint (no solid black bar): blend original ROI with this color
+_PASS_TINT_BGR = np.array([32, 36, 42], dtype=np.float32)
+_PASS_TINT_ALPHA = 0.42  # how much of the tint vs original (0 = no tint, 1 = solid tint)
+_PASS_TEXT_COLOR = (245, 245, 250)
+_PASS_TEXT_DIM = (200, 200, 210)  # slightly dimmer for older stacked passes
 
 
 def _render_logs_panel(
@@ -85,6 +102,66 @@ def _render_logs_panel(
     return panel
 
 
+def _draw_pass_overlay(
+    frame_top,
+    frame_id: int,
+    passes: list[PassEvent] | None,
+) -> None:
+    """
+    Draw pass lines at the top of the real-camera frame when near a pass event.
+
+    Overlapping passes stack vertically: older passes higher, the newest pass
+    always on the bottom line of the overlay (closest to the court). The
+    background is a light semi-transparent tint — not a solid black bar.
+    """
+    if not passes:
+        return
+    h, w = frame_top.shape[:2]
+    active: list[PassEvent] = []
+    for pe in passes:
+        if pe.frame - _PASS_FRAMES_BEFORE <= frame_id <= pe.frame + _PASS_FRAMES_AFTER:
+            active.append(pe)
+    if not active:
+        return
+    # Oldest at top of stack, newest at bottom (so when a new pass appears, older ones shift up)
+    active.sort(key=lambda p: p.frame)
+    active = active[-_PASS_MAX_STACK:]
+
+    lines: list[tuple[str, tuple[int, int, int]]] = []
+    n = len(active)
+    for i, pe in enumerate(active):
+        text = f"Pass {pe.from_player_id} -> {pe.to_player_id}  |  team {pe.team_id}  |  f{pe.frame}"
+        text = text[: min(len(text), 100)]
+        # Newest line (last in list) is brightest; older lines slightly dimmer
+        color = _PASS_TEXT_COLOR if i == n - 1 else _PASS_TEXT_DIM
+        lines.append((text, color))
+
+    bar_h = min(_PASS_BAR_PADDING * 2 + len(lines) * _PASS_LINE_HEIGHT, max(_PASS_LINE_HEIGHT * 2, h // 4))
+    bar_h = max(bar_h, _PASS_BAR_PADDING + len(lines) * _PASS_LINE_HEIGHT)
+
+    # Semi-transparent tint over top strip (keeps video visible underneath)
+    roi = frame_top[0:bar_h, :].astype(np.float32)
+    tint = np.broadcast_to(_PASS_TINT_BGR, roi.shape)
+    blended = roi * (1.0 - _PASS_TINT_ALPHA) + tint * _PASS_TINT_ALPHA
+    frame_top[0:bar_h, :] = np.clip(blended, 0, 255).astype(np.uint8)
+
+    # Thin separator at bottom of overlay
+    cv2.line(frame_top, (0, bar_h - 1), (w, bar_h - 1), (70, 70, 80), 1, cv2.LINE_AA)
+
+    for i, (line, color) in enumerate(lines):
+        y = _PASS_BAR_PADDING + (i + 1) * _PASS_LINE_HEIGHT - 4
+        cv2.putText(
+            frame_top,
+            line,
+            (_PASS_BAR_PADDING, y),
+            _PASS_FONT,
+            _PASS_FONT_SCALE,
+            color,
+            _PASS_THICKNESS,
+            cv2.LINE_AA,
+        )
+
+
 def make_side_by_side_video(
     top_video_path: str,
     bottom_video_path: str,
@@ -92,6 +169,7 @@ def make_side_by_side_video(
     *,
     detections=None,  # dict[int, list[Player]] | None
     ball_detections=None,  # dict[int, list[Ball]] | None
+    passes: list[PassEvent] | None = None,
     show_logs: bool = True,
     log_level_colors: dict[str, tuple[int, int, int]] | None = None,
     log_source_color: tuple[int, int, int] | None = None,
@@ -109,6 +187,7 @@ def make_side_by_side_video(
     output_path       — path to output video.
     detections        — (optional) players dict to draw on top video.
     ball_detections   — (optional) ball dict (frame_id -> list[Ball]) to draw center circles.
+    passes            — (optional) list of PassEvent; shows a short banner on the top view near each pass.
     show_logs         — if True, add logs panel for current frame (default True).
     log_level_colors  — BGR colors per level: {"info": (b,g,r), "warn": ..., "error": ..., "debug": ...}.
     log_source_color  — BGR color for [source] tag.
@@ -192,12 +271,10 @@ def make_side_by_side_video(
                                 (0, 0, 0),
                                 2,
                             )
-                        # Draw ball possession arrows:
-                        # - raw possession (left of center) in orange
-                        # - postprocessed possession (right of center) in red
+                        # Ball possession: orange = pre-segment (raw), red = post-segment
                         cx = (x1 + x2) // 2
                         top_y = max(0, y1 - 40)
-                        if getattr(player, "has_ball_raw", False):
+                        if getattr(player, "is_possession_raw", False):
                             cv2.arrowedLine(
                                 frame_top,
                                 (cx - 10, top_y),
@@ -206,7 +283,7 @@ def make_side_by_side_video(
                                 3,
                                 tipLength=0.3,
                             )
-                        if getattr(player, "has_ball_post", False):
+                        if player.is_possession:
                             cv2.arrowedLine(
                                 frame_top,
                                 (cx + 10, top_y),
@@ -227,6 +304,8 @@ def make_side_by_side_video(
                         cx = int((x1 + x2) / 2)
                         cy = int((y1 + y2) / 2)
                         cv2.circle(frame_top, (cx, cy), 6, (0, 165, 255), -1)
+
+            _draw_pass_overlay(frame_top, frame_id, passes)
 
             frame_bottom = cv2.resize(frame_bottom, (target_bottom_w, target_bottom_h))
 

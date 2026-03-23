@@ -4,6 +4,8 @@ from .referee import Referee, RefereesDetections
 from .skeleton import Skeleton
 from .detections import Detection, VideoDetections, FrameDetections
 from .ball import Ball
+from .possession_segment import PossessionSegment
+from .pass_event import PassEvent
 
 __all__ = [
     "CourtType",
@@ -16,4 +18,6 @@ __all__ = [
     "VideoDetections",
     "FrameDetections",
     "Ball",
+    "PossessionSegment",
+    "PassEvent",
 ]
