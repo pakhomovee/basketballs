@@ -104,7 +104,10 @@ class CourtDetector:
     def predict_keypoints(self, frame_rgb) -> (np.ndarray, np.ndarray, np.ndarray):
         preds = self.model.predict(frame_rgb, verbose=False, conf=self.conf, device=self.device)[0]
         if preds.boxes is None:
-            return np.empty((0, 3))
+            pred_centers = np.empty((0, 2), dtype=float)
+            pred_cls = np.empty((0,), dtype=int)
+            pred_confs = np.empty((0,), dtype=float)
+            return pred_centers, pred_cls, pred_confs
         pred_confs = preds.boxes.conf.cpu().numpy()
         pred_boxes = preds.boxes.xywh.cpu().numpy()
         pred_cls = preds.boxes.cls.cpu().numpy().astype(int)
