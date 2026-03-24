@@ -14,10 +14,12 @@ import numpy as np
 from tqdm import tqdm
 
 from ball_detector.detector import WASBBallDetector
+from config import load_app_config
 
 
 def visualize(input_path: str, output_path: str, step: int = 3):
-    detector = WASBBallDetector(step=step)
+    cfg = load_app_config(Path(__file__).resolve().parent.parent / "configs" / "main.yaml")
+    detector = WASBBallDetector(cfg=cfg, step=step)
     print(f"Running WASB ball detection (step={step}) on {input_path} …")
     results = detector.detect_video(input_path)
 

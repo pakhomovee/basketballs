@@ -183,12 +183,12 @@ def _extract_embeddings_for_segment(
     reid_weights: str | None = None,
 ) -> None:
     """Extract color + ReID embeddings from video for benchmark segment."""
-    from team_clustering.embedding import extract_player_embeddings
+    from team_clustering.embedding import PlayerEmbedder
 
     # Embedding extractors expect 0-based frame ids; CSV may be 1-based
     min_fid = min(player_dets) if player_dets else 0
     remapped = {fid - min_fid: players for fid, players in player_dets.items()}
-    extract_player_embeddings(video_path, remapped, seg_model=seg_model)
+    PlayerEmbedder(model_path=seg_model).extract_player_embeddings(video_path, remapped)
     # Copy embeddings back to original keys (same Player objects)
     if reid_weights and os.path.isfile(reid_weights):
         from common.utils.utils import get_device
@@ -267,7 +267,7 @@ def run_benchmark(
             frame_width = _get_video_frame_width(video_path)
         else:
             log.warning("  No video in %s — FlowTracker uses spatial only (no embeddings)", segment_path)
-        tracker_obj = FlowTracker(num_tracks=10, frame_width=frame_width)
+        tracker_obj = FlowTracker(frame_width=frame_width)
         tracker_obj.track(player_dets)
         det_list = [(fid, p) for fid in sorted(player_dets) for p in player_dets[fid]]
         tracks = _flow_tracker_results_to_tracks(det_list)
