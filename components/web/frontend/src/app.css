@@ -1,0 +1,27 @@
+@import 'tailwindcss';
+
+:root {
+	--color-bg: #0f1419;
+	--color-surface: #1a2030;
+	--color-surface-hover: #232d40;
+	--color-border: #2a3548;
+	--color-text: #e8edf4;
+	--color-text-muted: #8899aa;
+	--color-team-orange: #ff6b2b;
+	--color-team-blue: #3b82f6;
+	--color-accent: #ff6b2b;
+	--color-ball: #fbbf24;
+	--color-success: #22c55e;
+	--color-error: #ef4444;
+}
+
+body {
+	font-family:
+		'Inter',
+		system-ui,
+		-apple-system,
+		sans-serif;
+	background: var(--color-bg);
+	color: var(--color-text);
+	margin: 0;
+}

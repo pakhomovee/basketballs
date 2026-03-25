@@ -46,6 +46,9 @@ class Player:
     # Enriched by court detector
     court_position: tuple[float, float] | None = None
 
+    # Enriched by segmentation (polygon outline in image coordinates)
+    mask_polygon: list[list[float]] | None = None
+
 
 # frame_id -> list of Player detections for that frame
 PlayersDetections = dict[int, list[Player]]

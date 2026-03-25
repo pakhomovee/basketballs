@@ -1,25 +1,52 @@
+# Build artefacts & caches
 .cache/
 *.detections_cache.*.pkl
 *.detections_cache.pkl
 *.embeddings_cache.*.pkl
-.vscode/
 bazel-*
 *.pyc
 __pycache__/
-dataset/teamtrack*
-roadmap.md
 *.lock
-components/court_detector/dataset
-components/court_detector/runs
-components/court_detector/yolo_combined_data
-models
+
+# Editor / OS
+.vscode/
+.DS_Store
+.venv
+
+# Models & media (large binaries)
+models/
 *mp4
 !dataset/sample.mp4
 *pt
 *zip
 *out
-components/tracking/tracking
+
+# Dataset directories
+dataset/__MACOSX/
+dataset/teamtrack*
 dataset/deepsport
 dataset/data_reid
 dataset/basketball*
-.DS_Store
+dataset/team_clustering_benchmark/
+dataset/tracking_benchmark/
+dataset/tracking_long_benchmark/
+components/court_detector/dataset
+components/court_detector/runs
+components/court_detector/yolo_combined_data
+components/tracking/tracking
+
+# Data outputs
+data/
+output/
+
+# ---- Frontend ----
+components/web/frontend/node_modules/
+components/web/frontend/.svelte-kit/
+components/web/frontend/build/
+components/web/frontend/package-lock.json
+
+# Runtime storage (SQLite DB, uploaded videos, generated annotations)
+components/web/storage/
+
+# Development helper scripts (not needed in repo – run locally)
+roadmap.md

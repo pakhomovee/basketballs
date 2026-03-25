@@ -94,6 +94,33 @@ class TeamClusteringConfig(BaseModel):
     embedding: EmbeddingConfig = EmbeddingConfig()
 
 
+class ModelConfig(BaseModel):
+    """Filesystem paths and download URLs for all required model files."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Optional override for the models directory (defaults to <repo_root>/models)
+    models_dir: str | None = None
+
+    court_detection_filename: str = "court_detection_model.pt"
+    court_detection_url: str = "https://disk.yandex.ru/d/VRabl680FfKBog"
+
+    detector_filename: str = "detector_model.pt"
+    detector_url: str = "https://disk.yandex.ru/d/KdtL0zaQQlI5fg"
+
+    parseq_filename: str = "parseq_flex.ckpt"
+    parseq_url: str = "https://disk.yandex.ru/d/QucoCUmnUbLMHw"
+
+    reid_filename: str = "reid_model.pth"
+    reid_url: str = "https://disk.yandex.ru/d/Ak2skkMBdVCqmQ"
+
+    seg_filename: str = "seg-model.pt"
+    seg_url: str = "https://disk.yandex.ru/d/dpjzmKkadg-nZg"
+
+    wasb_filename: str = "wasb_basketball_best.pth.tar"
+    wasb_url: str = "https://disk.yandex.ru/d/JZQN5HEOKOegog"
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     main: MainConfig = MainConfig()
@@ -102,6 +129,7 @@ class AppConfig(BaseModel):
     detector: DetectorConfig = DetectorConfig()
     tracker: TrackerConfig = TrackerConfig()
     team_clustering: TeamClusteringConfig = TeamClusteringConfig()
+    models: ModelConfig = ModelConfig()
 
 
 def load_app_config(config_path: str | Path) -> AppConfig:

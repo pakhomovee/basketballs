@@ -129,8 +129,10 @@ class PlayerEmbedder:
                 continue
             frame_boxes = [box for _, box, _ in frame_entries]
             frame_masks = self.get_player_masks_for_frame(frame, frame_boxes)
-            for (player, _, crop), mask in zip(frame_entries, frame_masks):
+            for (player, _, crop), (mask, polygon) in zip(frame_entries, frame_masks):
                 player.embedding = self.extract_embedding(crop, mask).astype(np.float32)
+                if polygon is not None:
+                    player.mask_polygon = polygon.tolist()
 
         cap.release()
 
@@ -285,31 +287,33 @@ class PlayerEmbedder:
 
     def _build_frame_masks(
         self, result, frame_shape: tuple[int, int]
-    ) -> list[tuple[np.ndarray, tuple[int, int, int, int]]]:
+    ) -> list[tuple[np.ndarray, tuple[int, int, int, int], np.ndarray]]:
         if not result.masks or not result.masks.xy:
             return []
 
         frame_h, frame_w = frame_shape
-        masks: list[tuple[np.ndarray, tuple[int, int, int, int]]] = []
+        masks: list[tuple[np.ndarray, tuple[int, int, int, int], np.ndarray]] = []
         for polygon in result.masks.xy:
+            polygon_arr = np.array(polygon, dtype=np.float32)
             full_mask = np.zeros((frame_h, frame_w), dtype=np.uint8)
-            polygon_int = np.array(polygon).reshape((-1, 1, 2)).astype(int)
+            polygon_int = polygon_arr.reshape((-1, 1, 2)).astype(int)
             cv2.fillPoly(full_mask, [polygon_int], 1)
             bbox = self._mask_bbox(full_mask)
             if bbox is not None:
-                masks.append((full_mask, bbox))
+                masks.append((full_mask, bbox, polygon_arr))
         return masks
 
     def _match_mask_to_box(
         self,
         player_box: tuple[int, int, int, int],
-        frame_masks: list[tuple[np.ndarray, tuple[int, int, int, int]]],
-    ) -> np.ndarray | None:
+        frame_masks: list[tuple[np.ndarray, tuple[int, int, int, int], np.ndarray]],
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
         x1, y1, x2, y2 = player_box
         best_mask = None
+        best_polygon = None
         best_score = 0.0
 
-        for full_mask, mask_bbox in frame_masks:
+        for full_mask, mask_bbox, polygon_arr in frame_masks:
             score = self._bbox_iou(player_box, mask_bbox)
             if score <= best_score:
                 continue
@@ -318,15 +322,30 @@ class PlayerEmbedder:
             if np.any(cropped_mask):
                 best_score = score
                 best_mask = cropped_mask
+                # Derive the polygon from the clipped mask so it never bleeds
+                # outside the matched bounding box.
+                contours, _ = cv2.findContours(cropped_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if contours:
+                    largest = max(contours, key=cv2.contourArea)
+                    pts = largest.squeeze(1).astype(np.float32)  # (N, 2)
+                    pts[:, 0] += x1
+                    pts[:, 1] += y1
+                    best_polygon = pts
+                else:
+                    best_polygon = polygon_arr
 
-        return best_mask
+        return best_mask, best_polygon
 
     def get_player_masks_for_frame(
         self,
         frame: np.ndarray,
         player_boxes: list[tuple[int, int, int, int]],
-    ) -> list[np.ndarray | None]:
-        """Run segmentation on the full frame and crop one mask per player box."""
+    ) -> list[tuple[np.ndarray | None, np.ndarray | None]]:
+        """Run segmentation on the full frame and crop one mask per player box.
+
+        Returns a list of ``(cropped_mask, polygon)`` tuples where *polygon* is
+        the matched YOLO mask outline in image coordinates (shape ``(N, 2)``).
+        """
         if not player_boxes:
             return []
 
