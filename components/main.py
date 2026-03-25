@@ -16,7 +16,6 @@ from common.utils.models import ensure_models, get_model_paths
 from common.utils.utils import get_device
 from config import AppConfig, load_app_config
 from detector import Detector, enrich_detections_with_numbers, enrich_players_with_pose
-from detector.interpolate_ball_detections import linear_interpolate_ball_detections
 from ball_detector.detector import WASBBallDetector
 from actions.ball_possession import (
     assign_ball_possession_soft_dribble,
@@ -114,8 +113,7 @@ def main(cfg: AppConfig):
     wasb_detector = WASBBallDetector(cfg=cfg)
     ball_detections = wasb_detector.detect_video(video_path)
 
-    interpolated_ball_by_frame = linear_interpolate_ball_detections(ball_detections)
-    possession_ball_detections = {frame_id: [ball] for frame_id, ball in interpolated_ball_by_frame.items()}
+    possession_ball_detections = {frame_id: [ball] for frame_id, ball in ball_detections.items()}
 
     # Tracker
     _extract_embeddings(video_path, players_detections, enable_reid=not main_cfg.no_reid, reid_path=str(paths.reid))

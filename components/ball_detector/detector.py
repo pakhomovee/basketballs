@@ -166,6 +166,113 @@ class WASBBallDetector:
         self.model.to(self.device).eval()
 
     @torch.no_grad()
+    def detect_heatmap(
+        self,
+        frames_bgr: np.ndarray | list[np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray],
+        trans: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """
+        Run the HRNet model and return predicted heatmaps.
+
+        Parameters
+        ----------
+        frames_bgr
+            Either a single BGR frame (then it is replicated 3 times) or a
+            triplet of consecutive BGR frames. In the triplet case the model
+            outputs 3 heatmaps in the same order.
+        trans
+            Optional precomputed affine transform mapping the original frame to
+            model input resolution `MODEL_INPUT_WH`.
+
+        Returns
+        -------
+        np.ndarray
+            Heatmaps in model input coordinates:
+            shape `(3, 288, 512)` (one per input frame).
+        """
+        if isinstance(frames_bgr, np.ndarray):
+            frames = [frames_bgr, frames_bgr, frames_bgr]
+        else:
+            frames = list(frames_bgr)
+            if len(frames) != 3:
+                raise ValueError(f"frames_bgr must be a single frame or a triplet, got len={len(frames)}")
+
+        frame_h, frame_w = frames[1].shape[:2]
+        if trans is None:
+            center = np.array([frame_w / 2.0, frame_h / 2.0], dtype=np.float32)
+            scale = float(max(frame_h, frame_w))
+            trans = get_affine_transform(center, scale, MODEL_INPUT_WH)
+
+        # Preprocess each frame to the model input resolution and stack them.
+        inp = torch.cat([preprocess_frame(f, trans) for f in frames], dim=0).unsqueeze(0).to(self.device)
+
+        logits = self.model(inp)  # (1, 3, 288, 512)
+        hms = logits.sigmoid().detach().cpu().numpy()[0].astype(np.float32)
+        return hms
+
+    @staticmethod
+    def _lerp(a: float, b: float, t: float) -> float:
+        return a + (b - a) * t
+
+    @staticmethod
+    def linear_interpolate_ball_detections(
+        ball_detections: dict[int, Ball],
+        *,
+        max_gap: int = 50,
+        interpolated_confidence: float = 0.0,
+    ) -> dict[int, Ball]:
+        """
+        Fill missing frames between known ball detections with linear interpolation.
+
+        Interpolates bbox corners [x1, y1, x2, y2] directly.
+        Original detections are preserved; only missing frames are inserted.
+        """
+        if not ball_detections:
+            return {}
+
+        sorted_frames = sorted(ball_detections.keys())
+        out: dict[int, Ball] = {f: ball_detections[f] for f in sorted_frames}
+
+        for i in range(len(sorted_frames) - 1):
+            f1 = sorted_frames[i]
+            f2 = sorted_frames[i + 1]
+            gap = f2 - f1 - 1
+            if gap <= 0:
+                continue
+            if gap > max_gap:
+                continue
+
+            b1 = ball_detections[f1]
+            b2 = ball_detections[f2]
+            if len(b1.bbox) < 4 or len(b2.bbox) < 4:
+                continue
+
+            x1a, y1a, x2a, y2a = b1.bbox[:4]
+            x1b, y1b, x2b, y2b = b2.bbox[:4]
+
+            for k in range(1, gap + 1):
+                t = k / float(gap + 1)
+                frame_id = f1 + k
+
+                x1 = int(round(WASBBallDetector._lerp(x1a, x1b, t)))
+                y1 = int(round(WASBBallDetector._lerp(y1a, y1b, t)))
+                x2 = int(round(WASBBallDetector._lerp(x2a, x2b, t)))
+                y2 = int(round(WASBBallDetector._lerp(y2a, y2b, t)))
+
+                # Ensure valid bbox order after rounding.
+                if x2 <= x1:
+                    x2 = x1 + 1
+                if y2 <= y1:
+                    y2 = y1 + 1
+
+                out[frame_id] = Ball(
+                    bbox=[x1, y1, x2, y2],
+                    confidence=interpolated_confidence,
+                )
+
+        return dict(sorted(out.items(), key=lambda kv: kv[0]))
+
+    @torch.no_grad()
     def detect_video(self, video_path: str | Path) -> dict[int, Ball]:
         """
         Run detection on every frame of the video.
@@ -201,28 +308,14 @@ class WASBBallDetector:
 
         per_frame_candidates: list[list[dict]] = [[] for _ in range(n)]
 
-        tensors_cache: dict[int, torch.Tensor] = {}
-
-        def _get_tensor(idx: int) -> torch.Tensor:
-            if idx not in tensors_cache:
-                tensors_cache[idx] = preprocess_frame(frames_bgr[idx], trans)
-            return tensors_cache[idx]
-
         for start in range(0, n, self.step):
             triplet_indices = [min(start + k, n - 1) for k in range(3)]
-            inp = torch.cat([_get_tensor(i) for i in triplet_indices], dim=0)
-            inp = inp.unsqueeze(0).to(self.device)
-
-            logits = self.model(inp)  # (1, 3, 288, 512)
-            hms = logits.sigmoid().cpu().numpy()[0]  # (3, 288, 512)
+            triplet_frames = [frames_bgr[i] for i in triplet_indices]
+            hms = self.detect_heatmap(triplet_frames, trans=trans)  # (3, 288, 512)
 
             for k, fidx in enumerate(triplet_indices):
                 cands = postprocess_heatmap(hms[k], trans_inv, threshold=score_threshold)
                 per_frame_candidates[fidx].extend(cands)
-
-            for idx in list(tensors_cache):
-                if idx < start:
-                    del tensors_cache[idx]
 
         max_disp = max_disp_ratio * max(h, w)
         tracker = SimpleTracker(max_disp=max_disp)
@@ -236,4 +329,4 @@ class WASBBallDetector:
                     bbox=[int(round(x - r)), int(round(y - r)), int(round(x + r)), int(round(y + r))],
                     confidence=best["score"],
                 )
-        return ball_detections
+        return WASBBallDetector.linear_interpolate_ball_detections(ball_detections)
