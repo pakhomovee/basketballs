@@ -19,10 +19,9 @@ from court_detector.court_constants import (
 )
 from court_detector.court_detector import CourtDetector, project_homography
 from court_detector.prepare_dataset import SPORCENTER_GOOD_SEQS
+from config import load_default_config
 import json
 import matplotlib.pyplot as plt
-
-DETECTION_CONF = 0.25
 
 
 def _show_plot():
@@ -110,6 +109,7 @@ def main():
     model = YOLO(str(args.model))
     val_images = load_val_images(args.data_root)
     rng = random.Random()
+    court_detection_threshold = load_default_config().court_detector.detection_threshold
 
     # num_classes = int(max(p[2] for p in SMALL_COURT_POINTS)) + 1
     cmap = plt.colormaps.get_cmap("tab20")
@@ -129,7 +129,7 @@ def main():
         # gt_pts = load_gt_points(label_path, w, h)
 
         # Predictions
-        preds = model.predict(img_rgb, verbose=False, conf=DETECTION_CONF)[0]
+        preds = model.predict(img_rgb, verbose=False, conf=court_detection_threshold)[0]
         pred_boxes = preds.boxes.xywh.cpu().numpy() if preds.boxes is not None else np.empty((0, 4))
         pred_cls = preds.boxes.cls.cpu().numpy().astype(int) if preds.boxes is not None else np.empty((0,), dtype=int)
 
@@ -453,7 +453,7 @@ def run_roboflow(args):
 
 def run_video(args):
     # Detector and court constants
-    detector = CourtDetector(str(args.model), conf=DETECTION_CONF)
+    detector = CourtDetector(str(args.model), cfg=load_default_config())
     court_constants = CourtConstants(CourtType.NBA)
 
     # Pre-compute homographies, keypoint detections and per-frame losses

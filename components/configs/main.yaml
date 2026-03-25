@@ -1,0 +1,66 @@
+main:
+  # Can be overridden from CLI positional args.
+  video_path: null
+  output_both: null
+
+  output_2d_path: null
+
+  court_type: "nba" # "nba" | "fiba"
+  with_pose: false
+  enable_smoothing: true
+  no_reid: false
+
+court_detector:
+  detection_threshold: 0.25
+  smoothness_cost: 200.0
+  keypoint_eps: 0.003
+  smoothing_num_epochs: 300
+  smoothing_lr: 0.001
+
+ball_detector:
+  score_threshold: 0.3
+  max_disp_ratio: 0.3333333333
+
+detector:
+  initial_threshold: 0.1
+  player_conf_threshold: 0.1
+  referee_conf_threshold: 0.25
+  number_conf_threshold: 0.25
+  ocr_conf_threshold: 0.999
+
+tracker:
+  num_tracks: 10
+  max_skip: 15
+  bbox_scale: 20.0
+  w_spatial: 0.2
+  w_app: 0.6
+  w_iou: 0.2
+  w_extended: 1.5
+  skip_penalty: 1.0
+  detection_reward: 1.0
+  enter_cost: 2.0
+  exit_cost: 2.0
+  edge_margin: 5.0
+  k_warmup_frames: 10
+  last_frames: 10
+  n_passes: 5
+  lookback: 5
+  oof_entry_cost: 0.5
+  w_color: 0.3
+  max_occlusion: 45
+  occlusion_gate: 50.0
+  occlusion_penalty: 0.1
+  occlusion_start_pass: 2
+
+team_clustering:
+  embedding:
+    hue_bins: 12
+    saturation_bins: 8
+    value_bins: 8
+    lab_bins: 12
+    min_saturation_for_hue: 40
+    torso_center_x: 0.5
+    torso_center_y: 0.35
+    torso_sigma_x: 0.18
+    torso_sigma_y: 0.18
+    skin_weight: 0.15

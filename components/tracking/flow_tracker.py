@@ -18,12 +18,17 @@ from __future__ import annotations
 import bisect
 import logging
 from collections import defaultdict
+from typing import TYPE_CHECKING
 
 import numpy as np
 from tqdm import tqdm
 
 from common.distances import bbox_bottom_mid_distance, bbox_iou, cosine_dist
+from config import load_default_config
 from tracking.min_cost_flow import MinCostFlow
+
+if TYPE_CHECKING:
+    from config import AppConfig
 
 logger = logging.getLogger(__name__)
 S, T = 0, 1
@@ -65,130 +70,118 @@ def _end_out(n_det: int) -> int:
 class FlowTracker:
     """Offline multi-object tracker using min-cost max-flow.
 
-    Parameters
-    ----------
+    Almost all hyperparameters live in the application config under
+    ``cfg.tracker`` (:class:`~config.TrackerConfig`). If ``cfg`` is omitted,
+    :func:`config.load_default_config` loads the default YAML.
+
+    Only ``fps`` and ``frame_width`` are set on the constructor; everything
+    else below is read from ``cfg.tracker``.
+
+    Constructor
+    -----------
+    cfg : AppConfig | None, optional
+        Full app config; tracker fields are ``cfg.tracker.*``.
+    frame_width : float | None, optional
+        Frame width in pixels. If ``None``, inferred from the maximum bbox
+        ``x2`` over all detections. Used for out-of-frame handling (players
+        near the left/right edge).
+    fps : float, optional
+        Video frame rate. Not part of ``cfg.tracker``; supply from the input
+        video (e.g. computed in the pipeline ``main``).
+
+    Fields in ``cfg.tracker``
+    -------------------------
     num_tracks : int
-        Number of tracks to find (= number of flow units). 10 for basketball.
+        Number of concurrent tracks (= flow units). E.g. 10 for basketball.
     max_skip : int
-        Maximum frame gap for linking detections. Detections further apart
-        in time cannot be directly linked (track would need to end/restart).
-    max_speed : float
-        Maximum player speed in meters/second. Used for field-coordinate
-        gating — links exceeding this speed are pruned.
+        Maximum frame gap for a direct link between two detections. Larger
+        gaps cannot be bridged by a single edge (the track must end/restart).
     bbox_scale : float
-        Scale (pixels) for exponential spatial cost. Cost = exp(px_dist / scale) - 1,
-        with scale = bbox_scale * sqrt(frame_gap).  No hard gate — links are never
-        rejected by distance, but teleportation is exponentially discouraged.
+        Pixel scale for exponential spatial cost:
+        ``cost ≈ exp(px_dist / (bbox_scale * sqrt(frame_gap))) - 1``. There is
+        no hard distance gate; very long jumps are discouraged exponentially.
     w_spatial, w_app, w_iou : float
-        Weights for spatial, appearance, and IoU cost components.
+        Weights for spatial, appearance (ReID / embedding), and IoU link costs.
     w_extended : float
-        Weight for the extended appearance cost from mean tracklet embeddings.
-        Used in passes 2+ to penalise links whose tracklet neighbourhoods
-        look different. Set to 0 to effectively disable multi-pass enrichment.
-    oof_entry_cost : float
-        Additional cost to use transitions that come from out-of-frame
-        state (``start_out -> d_in`` and ``oof_i -> d_in_j``). Helps reduce
-        overuse of OOF routes when regular in-frame links are available.
-    skip_penalty : float
-        Per-skipped-frame additive penalty on link cost.
-    detection_reward : float
-        Reward (negative cost) on each detection edge. Incentivises the
-        solver to include as many detections as possible in tracks.
-        A track through N detections gets N × detection_reward savings.
-    enter_cost, exit_cost : float
-        Cost for a track to start / end. Higher values encourage longer,
-        unbroken tracks.
-    fps : float
-        Video frame rate (for speed ↔ distance conversion).
-    frame_width : float | None
-        Frame width in pixels. If None, inferred from max bbox x2 across detections.
-        Used for out-of-frame handling (detections near left/right edge).
-    edge_margin : float
-        Pixel distance from frame edge for "near edge" (can go out-of-frame).
-    k_warmup_frames : int
-        Tracks can start only in the first k_warmup frames or from start_out (entering from edge).
-    last_frames : int
-        Tracks can end only in the last N frames or in end_out (exiting to edge).
-    n_passes : int
-        Number of MCMF passes.  Pass 1 uses standard costs; passes 2+
-        enrich link costs with mean tracklet embeddings computed from the
-        previous solution, extending temporal consistency.
-    lookback : int
-        Number of track positions to look back/forward when building the
-        past/future mean tracklet embeddings for each detection during
-        multi-pass refinement.
+        Weight for the extra term built from mean tracklet embeddings in
+        passes 2+. Penalises links whose local tracklet neighbourhoods disagree.
+        Set to ``0`` to turn off that enrichment.
     w_color : float
-        Weight for continuous color-embedding cosine distance in link costs.
-        Provides soft team-aware association without binary clustering.
-        Also used in extended cost (mean tracklet color embeddings).
+        Weight for colour-embedding cosine distance on links (soft team cue),
+        also folded into the extended / tracklet-neighbourhood cost.
+    skip_penalty : float
+        Additive cost per skipped frame along an inter-detection edge.
+    detection_reward : float
+        Negative cost (reward) per taken detection node — encourages covering
+        detections; a track of length ``N`` gains ``N × detection_reward``.
+    enter_cost, exit_cost : float
+        Costs to start or end a track; higher values favour longer continuous tracks.
+    oof_entry_cost : float
+        Extra cost for edges from out-of-frame state (``start_out -> d_in``,
+        ``oof_i -> d_in``) to avoid abusing OOF when a normal in-frame link exists.
+    edge_margin : float
+        Pixel margin from the frame border for treating a bbox as “near edge”
+        (candidate for entering/leaving via out-of-frame nodes).
+    k_warmup_frames : int
+        New tracks may start only in the first ``k_warmup`` frames or from
+        ``start_out`` (entering from the side).
+    last_frames : int
+        Tracks may finish only in the last ``last_frames`` frames or via
+        ``end_out`` (exit to the side).
+    n_passes : int
+        Number of min-cost flow passes. Pass 1 uses base costs; later passes
+        add tracklet embedding context from the previous solution.
+    lookback : int
+        How many past/future steps per track enter the mean embedding used in
+        multi-pass refinement.
     max_occlusion : int
-        Maximum frame gap bridgeable by an occlusion edge.  An occluded
-        player can be linked across at most this many frames by riding
-        along an existing track.
+        Largest frame gap that an occlusion edge may span (riding along an
+        existing track while the player has no own detection).
     occlusion_gate : float
-        Maximum pixel distance (bbox bottom-center) between a detection
-        and an existing track's detection for the pair to be considered
-        an occlusion entry/exit point.
+        Maximum pixel distance (bbox bottom-centre) between a detection and a
+        candidate occlusion partner on another track.
     occlusion_penalty : float
-        Per-frame additive cost on occlusion edges.  Kept small because
-        the skipped frames already carry no detection reward.
+        Per-frame cost on occlusion edges (usually small; skipped frames forgo
+        detection reward already).
     occlusion_start_pass : int
-        0-indexed pass at which occlusion edges are first added.
+        Pass index (0-based) at which occlusion edges are first enabled.
     """
 
     def __init__(
         self,
-        num_tracks: int = 10,
-        max_skip: int = 15,
-        max_speed: float = 10.0,
-        bbox_scale: float = 20.0,
-        w_spatial: float = 0.2,
-        w_app: float = 0.6,
-        w_iou: float = 0.2,
-        w_extended: float = 1.5,
-        skip_penalty: float = 1.0,
-        detection_reward: float = 1.0,
-        enter_cost: float = 2.0,
-        exit_cost: float = 2.0,
-        fps: float = 30.0,
+        cfg: "AppConfig | None" = None,
         frame_width: float | None = None,
-        edge_margin: float = 5.0,
-        k_warmup_frames: int = 10,
-        last_frames: int = 10,
-        n_passes: int = 5,
-        lookback: int = 5,
-        oof_entry_cost: float = 0.5,
-        w_color: float = 0.3,
-        max_occlusion: int = 45,
-        occlusion_gate: float = 50.0,
-        occlusion_penalty: float = 0.1,
-        occlusion_start_pass: int = 2,
+        fps: float = 30.0,
     ):
-        self.num_tracks = num_tracks
-        self.max_skip = max_skip
-        self.max_speed = max_speed
-        self.bbox_scale = bbox_scale
-        self.w_spatial = w_spatial
-        self.w_app = w_app
-        self.w_iou = w_iou
-        self.w_extended = w_extended
-        self.skip_penalty = skip_penalty
-        self.detection_reward = detection_reward
-        self.enter_cost = enter_cost
-        self.exit_cost = exit_cost
+        if cfg is None:
+            cfg = load_default_config()
+        tracker_cfg = cfg.tracker
+
+        self.num_tracks = tracker_cfg.num_tracks
+        self.max_skip = tracker_cfg.max_skip
+        self.bbox_scale = tracker_cfg.bbox_scale
+        self.w_spatial = tracker_cfg.w_spatial
+        self.start_w_app = tracker_cfg.w_app
+        self.w_app = self.start_w_app
+        self.w_iou = tracker_cfg.w_iou
+        self.w_extended = tracker_cfg.w_extended
+        self.skip_penalty = tracker_cfg.skip_penalty
+        self.detection_reward = tracker_cfg.detection_reward
+        self.enter_cost = tracker_cfg.enter_cost
+        self.exit_cost = tracker_cfg.exit_cost
         self.fps = fps
         self.frame_width = frame_width
-        self.edge_margin = edge_margin
-        self.k_warmup_frames = k_warmup_frames
-        self.last_frames = last_frames
-        self.n_passes = n_passes
-        self.lookback = lookback
-        self.oof_entry_cost = oof_entry_cost
-        self.w_color = w_color
-        self.max_occlusion = max_occlusion
-        self.occlusion_gate = occlusion_gate
-        self.occlusion_penalty = occlusion_penalty
-        self.occlusion_start_pass = occlusion_start_pass
+        self.edge_margin = tracker_cfg.edge_margin
+        self.k_warmup_frames = tracker_cfg.k_warmup_frames
+        self.last_frames = tracker_cfg.last_frames
+        self.n_passes = tracker_cfg.n_passes
+        self.lookback = tracker_cfg.lookback
+        self.oof_entry_cost = tracker_cfg.oof_entry_cost
+        self.w_color = tracker_cfg.w_color
+        self.max_occlusion = tracker_cfg.max_occlusion
+        self.occlusion_gate = tracker_cfg.occlusion_gate
+        self.occlusion_penalty = tracker_cfg.occlusion_penalty
+        self.occlusion_start_pass = tracker_cfg.occlusion_start_pass
 
     def track(self, detections: dict) -> None:
         """Assign track IDs to all players using min-cost flow.
@@ -231,6 +224,7 @@ class FlowTracker:
 
         tracks: list[list[int]] | None = None
         lookback = self.lookback
+        self.w_app = self.start_w_app
         for pass_idx in range(self.n_passes):
             past_embs: dict[int, np.ndarray] | None = None
             future_embs: dict[int, np.ndarray] | None = None

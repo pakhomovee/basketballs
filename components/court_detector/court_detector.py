@@ -2,6 +2,7 @@ import json
 import shutil
 from pathlib import Path
 from copy import deepcopy
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
@@ -14,12 +15,17 @@ from court_detector.prepare_dataset import prepare_dataset
 from court_detector.homography import find_homography_ransac
 from common.classes.player import PlayersDetections
 from common.logger import get_logger
+from common.utils.utils import get_device
 
 from typing import Any, Optional
 from collections import defaultdict
 
 from common.classes import CourtType
+from config import load_default_config
 from tqdm import tqdm
+
+if TYPE_CHECKING:
+    from config import AppConfig
 
 
 def project_homography(points_xy, H):
@@ -37,11 +43,19 @@ class CourtDetector:
         self,
         model_path: str | Path = Path(__file__).parent.parent.parent / "models" / "court_detection_model.pt",
         model_pretrained=None,
-        conf=0.25,
+        cfg: "AppConfig | None" = None,
+        device: Optional[str] = None,
     ):
+        if cfg is None:
+            cfg = load_default_config()
+        self.cfg = cfg
+        if device is None:
+            device = get_device()
+        self.device = device
         self.model = YOLO(model_path) if model_pretrained is None else YOLO(model_pretrained)
+        self.model.to(self.device)
         self.model_path = model_path
-        self.conf = conf
+        self.conf = self.cfg.court_detector.detection_threshold
 
     def train(
         self,
@@ -65,7 +79,7 @@ class CourtDetector:
             epochs=epochs,
             batch=batch,
             imgsz=imgsz,
-            device=0 if torch.cuda.is_available() else "cpu",
+            device=self.device,
             project=project,
             name=model_name,
             cache=False,
@@ -83,16 +97,17 @@ class CourtDetector:
         )
         best_model_path = str(save_dir / "weights" / "best.pt")
         self.model = YOLO(best_model_path)
+        self.model.to(self.device)
         if save:
             self.model.save(self.model_path)
 
-    def set_prediction_confedence(self, new_conf):
-        self.conf = new_conf
-
     def predict_keypoints(self, frame_rgb) -> (np.ndarray, np.ndarray, np.ndarray):
-        preds = self.model.predict(frame_rgb, verbose=False, conf=self.conf)[0]
+        preds = self.model.predict(frame_rgb, verbose=False, conf=self.conf, device=self.device)[0]
         if preds.boxes is None:
-            return np.empty((0, 3))
+            pred_centers = np.empty((0, 2), dtype=float)
+            pred_cls = np.empty((0,), dtype=int)
+            pred_confs = np.empty((0,), dtype=float)
+            return pred_centers, pred_cls, pred_confs
         pred_confs = preds.boxes.conf.cpu().numpy()
         pred_boxes = preds.boxes.xywh.cpu().numpy()
         pred_cls = preds.boxes.cls.cpu().numpy().astype(int)
@@ -187,36 +202,33 @@ class CourtDetector:
         self,
         video_path: str,
         court_constants: CourtConstants,
-        alpha: float = 200.0,
-        eps: float = 0.003,
-        smooth_num_epochs: int = 300,
-        smooth_lr: float = 0.001,
-        device: Optional[str] = None,
-        smooth_dtype=torch.float32,
+        smoothness_cost: float = 200.0,
+        keypoint_eps: float = 0.003,
+        smoothing_num_epochs: int = 300,
+        smoothing_lr: float = 0.001,
+        torch_dtype=torch.float32,
+        np_dtype=np.float32,
     ):
         """
         Optical-flow + D&C greedy optimisation.
 
         1) Single pass: detect keypoints, compute inter-frame flow homographies.
-        2) Optimise:  sum_i reward_i  -  alpha * sum_i smooth_cost_i
-           where reward uses exp((cos_sim - 1) / eps) and smooth_cost is
+        2) Optimise:  sum_i reward_i  -  smoothness_cost * sum_i smooth_cost_i
+           where reward uses exp((cos_sim - 1) / keypoint_eps) and smooth_cost is
            homographies_dist between H_{i+1} and H_i propagated through flow.
         3) Greedy D&C: at each level, take children answers, then try a single
            level-wide RANSAC; keep whichever gives a better objective.
         """
-        # choose device once and use it for both D&C and smoothing
-        if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video: {video_path}")
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
         frames_sizes: list[tuple[int, int]] = []
         keypoints_detections: list[tuple[np.ndarray, np.ndarray]] = []
         forward_H_norm: list[Optional[np.ndarray]] = []
 
-        court_size = np.array(court_constants.court_size, dtype=np.float64)
+        court_size = np.array(court_constants.court_size, dtype=np_dtype)
 
         per_frame_src_h: list[np.ndarray] = []
         per_frame_dst_h: list[np.ndarray] = []
@@ -226,44 +238,46 @@ class CourtDetector:
         frame_idx = 0
 
         print("Reading frames, detecting keypoints and computing optical flow...")
-        while True:
-            ret, frame_bgr = cap.read()
-            if not ret:
-                break
-            h, w, _ = frame_bgr.shape
-            frame_size = np.array([w, h], dtype=np.float64)
-            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-            gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        with tqdm(total=total_frames if total_frames > 0 else None, unit="frame") as pbar:
+            while True:
+                ret, frame_bgr = cap.read()
+                if not ret:
+                    break
+                h, w, _ = frame_bgr.shape
+                frame_size = np.array([w, h], dtype=np_dtype)
+                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
-            pred_centers, pred_cls, pred_confs = self.predict_keypoints(frame_rgb)
-            keypoints_detections.append((pred_centers, pred_cls))
-            frames_sizes.append((w, h))
+                pred_centers, pred_cls, pred_confs = self.predict_keypoints(frame_rgb)
+                keypoints_detections.append((pred_centers, pred_cls))
+                frames_sizes.append((w, h))
 
-            src_pts = []
-            dst_pts = []
-            for frame_pt, cls_id in zip(pred_centers, pred_cls):
-                if cls_id not in court_constants.cls_to_points:
-                    continue
-                court_pt = court_constants.cls_to_points[cls_id][0]
-                src_pts.append(np.array(frame_pt) / frame_size)
-                dst_pts.append(np.array(court_pt) / court_size)
-            src_arr = np.array(src_pts, dtype=np.float64).reshape(-1, 2)
-            dst_arr = np.array(dst_pts, dtype=np.float64).reshape(-1, 2)
-            if len(src_arr) > 0:
-                ones = np.ones((len(src_arr), 1), dtype=np.float64)
-                per_frame_src_h.append(np.hstack([src_arr, ones]))
-                per_frame_dst_h.append(np.hstack([dst_arr, ones]))
-            else:
-                per_frame_src_h.append(np.empty((0, 3), dtype=np.float64))
-                per_frame_dst_h.append(np.empty((0, 3), dtype=np.float64))
+                src_pts = []
+                dst_pts = []
+                for frame_pt, cls_id in zip(pred_centers, pred_cls):
+                    if cls_id not in court_constants.cls_to_points:
+                        continue
+                    court_pt = court_constants.cls_to_points[cls_id][0]
+                    src_pts.append(np.array(frame_pt) / frame_size)
+                    dst_pts.append(np.array(court_pt) / court_size)
+                src_arr = np.array(src_pts, dtype=np_dtype).reshape(-1, 2)
+                dst_arr = np.array(dst_pts, dtype=np_dtype).reshape(-1, 2)
+                if len(src_arr) > 0:
+                    ones = np.ones((len(src_arr), 1), dtype=np_dtype)
+                    per_frame_src_h.append(np.hstack([src_arr, ones]))
+                    per_frame_dst_h.append(np.hstack([dst_arr, ones]))
+                else:
+                    per_frame_src_h.append(np.empty((0, 3), dtype=np_dtype))
+                    per_frame_dst_h.append(np.empty((0, 3), dtype=np_dtype))
 
-            if frame_idx > 0:
-                H_flow = self._compute_flow_homography_norm(prev_gray, gray, prev_size, (w, h))
-                forward_H_norm.append(H_flow)
+                if frame_idx > 0:
+                    H_flow = self._compute_flow_homography_norm(prev_gray, gray, prev_size, (w, h))
+                    forward_H_norm.append(H_flow)
 
-            prev_gray = gray
-            prev_size = (w, h)
-            frame_idx += 1
+                prev_gray = gray
+                prev_size = (w, h)
+                frame_idx += 1
+                pbar.update(1)
 
         cap.release()
 
@@ -273,7 +287,7 @@ class CourtDetector:
 
         # ---- precompute chains and inverses --------------------------------
         H_norm_0_to: list[Optional[np.ndarray]] = [None] * n
-        H_norm_0_to[0] = np.eye(3, dtype=np.float64)
+        H_norm_0_to[0] = np.eye(3, dtype=np_dtype)
         for i in range(1, n):
             if H_norm_0_to[i - 1] is None or forward_H_norm[i - 1] is None:
                 H_norm_0_to[i] = H_norm_0_to[i - 1]
@@ -299,9 +313,9 @@ class CourtDetector:
         # ---- padded arrays for vectorised objective (NumPy) -----------------
         max_K = max((len(s) for s in per_frame_src_h), default=0)
         max_K = max(max_K, 1)
-        src_pad = np.zeros((n, max_K, 3), dtype=np.float64)
-        dst_pad = np.zeros((n, max_K, 3), dtype=np.float64)
-        kp_mask = np.zeros((n, max_K), dtype=np.float64)
+        src_pad = np.zeros((n, max_K, 3), dtype=np_dtype)
+        dst_pad = np.zeros((n, max_K, 3), dtype=np_dtype)
+        kp_mask = np.zeros((n, max_K), dtype=np_dtype)
         for i in range(n):
             k = len(per_frame_src_h[i])
             if k > 0:
@@ -312,22 +326,22 @@ class CourtDetector:
         dst_pad_T = dst_pad.transpose(0, 2, 1)  # (N, 3, K)
         dst_norm = np.linalg.norm(dst_pad_T, axis=1)  # (N, K)
 
-        flow_inv_arr = np.zeros((max(n - 1, 1), 3, 3), dtype=np.float64)
-        flow_mask_arr = np.zeros(max(n - 1, 1), dtype=np.float64)
+        flow_inv_arr = np.zeros((max(n - 1, 1), 3, 3), dtype=np_dtype)
+        flow_mask_arr = np.zeros(max(n - 1, 1), dtype=np_dtype)
         for i in range(n - 1):
             if forward_H_norm_inv[i] is not None:
                 flow_inv_arr[i] = forward_H_norm_inv[i]
                 flow_mask_arr[i] = 1.0
             else:
-                flow_inv_arr[i] = np.eye(3, dtype=np.float64)
+                flow_inv_arr[i] = np.eye(3, dtype=np_dtype)
 
         vecs1_np = np.array(
             [[x, y, 1.0] for x in [0, 0.5, 1.0] for y in [0, 0.5, 1.0]],
-            dtype=np.float64,
+            dtype=np_dtype,
         ).T  # (3, 9)
         vecs2_np = np.array(
             [[x, y, 1.0] for x in [-0.5, 0, 0.5] for y in [-0.5, 0, 0.5]],
-            dtype=np.float64,
+            dtype=np_dtype,
         ).T  # (3, 9)
         v1_norm = np.linalg.norm(vecs1_np, axis=0)  # (9,)
         v2_norm = np.linalg.norm(vecs2_np, axis=0)  # (9,)
@@ -358,7 +372,7 @@ class CourtDetector:
             proj = H_arr @ src_pad[left:right].transpose(0, 2, 1)  # (S, 3, K)
             dot = (proj * dst_pad_T[left:right]).sum(axis=1)  # (S, K)
             cs = dot / (np.linalg.norm(proj, axis=1) * dst_norm[left:right] + 1e-12)
-            return (np.exp((cs - 1.0) / eps) * kp_mask[left:right]).sum(axis=1) * h_mask
+            return (np.exp((cs - 1.0) / keypoint_eps) * kp_mask[left:right]).sum(axis=1) * h_mask
 
         def _seg_smooth(Hs_list, left, right):
             if right - left <= 1:
@@ -370,7 +384,9 @@ class CourtDetector:
             return _np_batch_hdist(H_arr[1:], predicted) * pair_mask
 
         def _seg_objective(Hs_list, left, right):
-            return float(_seg_rewards(Hs_list, left, right).sum() - alpha * _seg_smooth(Hs_list, left, right).sum())
+            return float(
+                _seg_rewards(Hs_list, left, right).sum() - smoothness_cost * _seg_smooth(Hs_list, left, right).sum()
+            )
 
         def h_i_to_ref(i: int, ref: int) -> Optional[np.ndarray]:
             if H_norm_i_to_0[i] is None or H_norm_0_to[ref] is None:
@@ -387,51 +403,52 @@ class CourtDetector:
                     H_i = H_i.detach().cpu().numpy()
                 homographies[i] = H_i
 
+        dc_segments: list[tuple[int, int]] = []
         seg_size = 2
         while seg_size <= 2 * n:
             for seg_start in range(0, n, seg_size):
                 left = seg_start
                 right = min(left + seg_size, n)
-                if right - left <= 1:
-                    continue
-
-                children_obj = _seg_objective(homographies[left:right], left, right)
-
-                all_src: list[np.ndarray] = []
-                all_dst: list[np.ndarray] = []
-                for i in range(left, right):
-                    if len(per_frame_src_h[i]) == 0:
-                        continue
-                    T = h_i_to_ref(i, left)
-                    if T is None:
-                        continue
-                    all_src.append((T @ per_frame_src_h[i].T).T)
-                    all_dst.append(per_frame_dst_h[i])
-
-                if not all_src:
-                    continue
-                src_combined = np.concatenate(all_src, axis=0)
-                dst_combined = np.concatenate(all_dst, axis=0)
-                if len(src_combined) < 4:
-                    continue
-
-                H_l = find_homography_ransac(src_combined, dst_combined)
-                if H_l is None:
-                    continue
-                if isinstance(H_l, torch.Tensor):
-                    H_l_np = H_l.detach().cpu().numpy()
-                else:
-                    H_l_np = H_l
-
-                candidate_Hs: list[Optional[np.ndarray]] = []
-                for i in range(left, right):
-                    T = h_i_to_ref(i, left)
-                    candidate_Hs.append(H_l_np @ T if T is not None else None)
-
-                if _seg_objective(candidate_Hs, left, right) > children_obj:
-                    homographies[left:right] = candidate_Hs
-
+                if right - left > 1:
+                    dc_segments.append((left, right))
             seg_size *= 2
+
+        for left, right in tqdm(dc_segments, desc="D&C optimisation", unit="segment"):
+            children_obj = _seg_objective(homographies[left:right], left, right)
+
+            all_src: list[np.ndarray] = []
+            all_dst: list[np.ndarray] = []
+            for i in range(left, right):
+                if len(per_frame_src_h[i]) == 0:
+                    continue
+                T = h_i_to_ref(i, left)
+                if T is None:
+                    continue
+                all_src.append((T @ per_frame_src_h[i].T).T)
+                all_dst.append(per_frame_dst_h[i])
+
+            if not all_src:
+                continue
+            src_combined = np.concatenate(all_src, axis=0)
+            dst_combined = np.concatenate(all_dst, axis=0)
+            if len(src_combined) < 4:
+                continue
+
+            H_l = find_homography_ransac(src_combined, dst_combined)
+            if H_l is None:
+                continue
+            if isinstance(H_l, torch.Tensor):
+                H_l_np = H_l.detach().cpu().numpy()
+            else:
+                H_l_np = H_l
+
+            candidate_Hs: list[Optional[np.ndarray]] = []
+            for i in range(left, right):
+                T = h_i_to_ref(i, left)
+                candidate_Hs.append(H_l_np @ T if T is not None else None)
+
+            if _seg_objective(candidate_Hs, left, right) > children_obj:
+                homographies[left:right] = candidate_Hs
 
         homographies, losses = self.smooth_homographies_v2(
             homographies,
@@ -439,12 +456,12 @@ class CourtDetector:
             frames_sizes,
             court_constants,
             forward_H_norm_inv,
-            alpha=alpha,
-            eps=eps,
-            num_epochs=smooth_num_epochs,
-            lr=smooth_lr,
-            device=device,
-            dtype=smooth_dtype,
+            smoothness_cost=smoothness_cost,
+            keypoint_eps=keypoint_eps,
+            num_epochs=smoothing_num_epochs,
+            lr=smoothing_lr,
+            torch_dtype=torch_dtype,
+            np_dtype=np_dtype,
         )
 
         return homographies, frames_sizes, keypoints_detections, losses
@@ -456,18 +473,18 @@ class CourtDetector:
         frames_sizes: list[tuple[int, int]],
         court_constants: CourtConstants,
         forward_H_norm_inv: list[Optional[np.ndarray]],
-        alpha: float = 200.0,
-        eps: float = 0.003,
+        smoothness_cost: float = 200.0,
+        keypoint_eps: float = 0.003,
         num_epochs: int = 300,
         lr: float = 0.001,
-        device: Optional[str] = None,
-        dtype=torch.float32,
+        torch_dtype=torch.float32,
+        np_dtype=np.float32,
     ):
         """
         Optimise the same objective as extract_homographies_from_video_v2 using Adam.
 
-        objective = sum_i reward_i  -  alpha * sum_i smooth_i
-        reward_i  = sum_k exp((cos_sim(H_i @ src_ik, dst_ik) - 1) / eps)
+        objective = sum_i reward_i  -  smoothness_cost * sum_i smooth_i
+        reward_i  = sum_k exp((cos_sim(H_i @ src_ik, dst_ik) - 1) / keypoint_eps)
         smooth_i  = homographies_dist(H_{i+1}, H_i @ inv(flow_i))
 
         Fully vectorised: all keypoints and smoothness terms are computed in
@@ -477,9 +494,6 @@ class CourtDetector:
         n = len(homographies)
         if n == 0:
             return homographies, None
-
-        if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
 
         # ---- fill None homographies by propagation -------------------------
         homographies = deepcopy(homographies)
@@ -494,7 +508,7 @@ class CourtDetector:
 
         # ---- normalise & stack into (N, 3, 3) tensor -----------------------
         H_np = np.stack([H / np.sqrt((H * H).sum()) for H in homographies], axis=0)
-        H = torch.tensor(H_np, dtype=dtype, device=device, requires_grad=True)
+        H = torch.tensor(H_np, dtype=torch_dtype, device=self.device, requires_grad=True)
 
         # ---- padded keypoint tensors (N, max_K, 3) -------------------------
         court_size = court_constants.court_size
@@ -512,13 +526,13 @@ class CourtDetector:
                 s.append([kc[0] / w, kc[1] / h, 1.0])
                 d.append([cp[0] / court_size[0], cp[1] / court_size[1], 1.0])
             counts.append(len(s))
-            per_src.append(np.array(s, dtype=np.float64) if s else np.empty((0, 3)))
-            per_dst.append(np.array(d, dtype=np.float64) if d else np.empty((0, 3)))
+            per_src.append(np.array(s, dtype=np_dtype) if s else np.empty((0, 3)))
+            per_dst.append(np.array(d, dtype=np_dtype) if d else np.empty((0, 3)))
 
         max_K = max(max(counts), 1)
-        src_pad = np.zeros((n, max_K, 3), dtype=np.float64)
-        dst_pad = np.zeros((n, max_K, 3), dtype=np.float64)
-        kp_mask = np.zeros((n, max_K), dtype=np.float64)
+        src_pad = np.zeros((n, max_K, 3), dtype=np_dtype)
+        dst_pad = np.zeros((n, max_K, 3), dtype=np_dtype)
+        kp_mask = np.zeros((n, max_K), dtype=np_dtype)
         for i in range(n):
             k = counts[i]
             if k > 0:
@@ -526,9 +540,9 @@ class CourtDetector:
                 dst_pad[i, :k] = per_dst[i]
                 kp_mask[i, :k] = 1.0
 
-        src_t = torch.tensor(src_pad, dtype=dtype, device=device)  # (N, K, 3)
-        dst_t = torch.tensor(dst_pad, dtype=dtype, device=device)  # (N, K, 3)
-        mask_t = torch.tensor(kp_mask, dtype=dtype, device=device)  # (N, K)
+        src_t = torch.tensor(src_pad, dtype=torch_dtype, device=self.device)  # (N, K, 3)
+        dst_t = torch.tensor(dst_pad, dtype=torch_dtype, device=self.device)  # (N, K, 3)
+        mask_t = torch.tensor(kp_mask, dtype=torch_dtype, device=self.device)  # (N, K)
 
         # ---- flow inverse tensor & mask (N-1, 3, 3) -----------------------
         if n > 1:
@@ -538,24 +552,24 @@ class CourtDetector:
                     fi_list.append(forward_H_norm_inv[i])
                     fm_list.append(1.0)
                 else:
-                    fi_list.append(np.eye(3, dtype=np.float64))
+                    fi_list.append(np.eye(3, dtype=np_dtype))
                     fm_list.append(0.0)
-            flow_inv_t = torch.tensor(np.stack(fi_list), dtype=dtype, device=device)
-            flow_mask_t = torch.tensor(fm_list, dtype=dtype, device=device)
+            flow_inv_t = torch.tensor(np.stack(fi_list), dtype=torch_dtype, device=self.device)
+            flow_mask_t = torch.tensor(fm_list, dtype=torch_dtype, device=self.device)
         else:
-            flow_inv_t = torch.empty((0, 3, 3), dtype=dtype, device=device)
-            flow_mask_t = torch.empty((0,), dtype=dtype, device=device)
+            flow_inv_t = torch.empty((0, 3, 3), dtype=torch_dtype, device=self.device)
+            flow_mask_t = torch.empty((0,), dtype=torch_dtype, device=self.device)
 
         # ---- test vectors for homographies_dist (transposed: 3×9) ----------
         v1 = torch.tensor(
             [[x, y, 1.0] for x in [0, 0.5, 1.0] for y in [0, 0.5, 1.0]],
-            dtype=dtype,
-            device=device,
+            dtype=torch_dtype,
+            device=self.device,
         ).T  # (3, 9)
         v2 = torch.tensor(
             [[x, y, 1.0] for x in [-0.5, 0, 0.5] for y in [-0.5, 0, 0.5]],
-            dtype=dtype,
-            device=device,
+            dtype=torch_dtype,
+            device=self.device,
         ).T  # (3, 9)
 
         def _batch_cs(Mv, v_ref):
@@ -587,7 +601,7 @@ class CourtDetector:
             dT = dst_t.transpose(1, 2)  # (N, 3, K)
             dot = (proj * dT).sum(dim=1)  # (N, K)
             cs = dot / (proj.norm(dim=1) * dT.norm(dim=1) + 1e-12)
-            reward = (torch.exp((cs - 1.0) / eps) * mask_t).sum()
+            reward = (torch.exp((cs - 1.0) / keypoint_eps) * mask_t).sum()
 
             # smoothness: compare H_{i+1} with H_i propagated through flow
             if n > 1:
@@ -595,9 +609,9 @@ class CourtDetector:
                 dists = _batch_hdist(H[1:], predicted)  # (N-1,)
                 smooth = (dists * flow_mask_t).sum()
             else:
-                smooth = torch.tensor(0.0, dtype=dtype, device=device)
+                smooth = torch.tensor(0.0, dtype=torch_dtype, device=self.device)
 
-            return -(reward - alpha * smooth)
+            return -(reward - smoothness_cost * smooth)
 
         # ---- optimisation loop ---------------------------------------------
         optimizer = torch.optim.Adam([H], lr=lr)
@@ -617,7 +631,7 @@ class CourtDetector:
             dT = dst_t.transpose(1, 2)
             dot = (proj * dT).sum(dim=1)
             cs = dot / (proj.norm(dim=1) * dT.norm(dim=1) + 1e-12)
-            per_reward = (torch.exp((cs - 1.0) / eps) * mask_t).sum(dim=1)  # (N,)
+            per_reward = (torch.exp((cs - 1.0) / keypoint_eps) * mask_t).sum(dim=1)  # (N,)
             losses = (-per_reward).cpu().numpy().tolist()
 
         result = [H[i].detach().cpu().numpy() for i in range(n)]
@@ -655,15 +669,19 @@ class CourtDetector:
 
         pw, ph = prev_size
         cw, ch = curr_size
-        prev_norm = good_prev.reshape(-1, 2) / np.array([pw, ph], dtype=np.float64)
-        curr_norm = good_curr.reshape(-1, 2) / np.array([cw, ch], dtype=np.float64)
+        prev_norm = good_prev.reshape(-1, 2) / np.array([pw, ph])
+        curr_norm = good_curr.reshape(-1, 2) / np.array([cw, ch])
 
         H, inliers = cv2.findHomography(prev_norm, curr_norm, cv2.RANSAC, 3.0 / max(pw, ph, cw, ch))
         if H is None or inliers is None:
             return None
         return H
 
-    def run(self, video_path: str, detections: PlayersDetections, court_type: CourtType = CourtType.NBA):
+    def run(
+        self,
+        video_path: str,
+        detections: PlayersDetections,
+    ) -> list[Optional[np.ndarray]]:
         """
         Process video frame-by-frame, compute homography, and enrich each
         :class:`Player` with ``court_position`` (x_m, y_m in meters).
@@ -672,9 +690,28 @@ class CourtDetector:
 
         print(f"Running court detector on {video_path}...")
 
+        court_type_cfg = self.cfg.main.court_type
+        if isinstance(court_type_cfg, CourtType):
+            court_type = court_type_cfg
+        elif isinstance(court_type_cfg, str):
+            ct = court_type_cfg.lower()
+            if ct == "nba":
+                court_type = CourtType.NBA
+            elif ct == "fiba":
+                court_type = CourtType.FIBA
+            else:
+                raise ValueError(f"Unsupported court_type in config: {court_type_cfg}")
+        else:
+            raise TypeError(f"Unsupported court_type type: {type(court_type_cfg)}")
+
         court_constants = CourtConstants(court_type)
         homographies, frames_sizes, keypoint_detections, losses = self.extract_homographies_from_video_v2(
-            video_path, court_constants
+            video_path,
+            court_constants,
+            smoothness_cost=self.cfg.court_detector.smoothness_cost,
+            keypoint_eps=self.cfg.court_detector.keypoint_eps,
+            smoothing_num_epochs=self.cfg.court_detector.smoothing_num_epochs,
+            smoothing_lr=self.cfg.court_detector.smoothing_lr,
         )
 
         court_w, court_h = court_constants.court_size

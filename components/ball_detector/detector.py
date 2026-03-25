@@ -6,6 +6,7 @@ triplets of consecutive frames, and returns ball position candidates per frame.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
@@ -14,9 +15,13 @@ from torchvision import transforms
 
 from ball_detector.model import WASBHRNet
 from common.classes.ball import Ball
+from common.utils.utils import get_device
+from config import load_default_config
+
+if TYPE_CHECKING:
+    from config import AppConfig
 
 MODEL_INPUT_WH = (512, 288)
-SCORE_THRESHOLD = 0.3
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 BALL_BBOX_RADIUS = 10
@@ -85,7 +90,7 @@ def preprocess_frame(frame_bgr: np.ndarray, trans: np.ndarray) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 
 
-def postprocess_heatmap(hm: np.ndarray, trans_inv: np.ndarray, threshold: float = SCORE_THRESHOLD):
+def postprocess_heatmap(hm: np.ndarray, trans_inv: np.ndarray, threshold: float):
     """
     Extract ball candidates from a single-channel heatmap (after sigmoid).
 
@@ -140,21 +145,25 @@ class WASBBallDetector:
     def __init__(
         self,
         weights_path: str | Path = Path(__file__).parent.parent.parent / "models" / "wasb_basketball_best.pth.tar",
+        cfg: "AppConfig | None" = None,
         device: str | None = None,
         step: int = 3,
     ):
+        if cfg is None:
+            cfg = load_default_config()
+        self.cfg = cfg
         if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            device = get_device()
         self.device = device
         self.step = step
 
         self.model = WASBHRNet()
-        ckpt = torch.load(str(weights_path), map_location="cpu")
+        ckpt = torch.load(str(weights_path), map_location="cpu", weights_only=True)
         state = ckpt["model_state_dict"]
         # strip "module." prefix left by DataParallel
         cleaned = {k.removeprefix("module."): v for k, v in state.items()}
         self.model.load_state_dict(cleaned)
-        self.model.to(device).eval()
+        self.model.to(self.device).eval()
 
     @torch.no_grad()
     def detect_video(self, video_path: str | Path) -> dict[int, Ball]:
@@ -165,6 +174,9 @@ class WASBBallDetector:
         detected are present.  ``Ball.bbox`` is a small square centred
         on the detected position.
         """
+        score_threshold = self.cfg.ball_detector.score_threshold
+        max_disp_ratio = self.cfg.ball_detector.max_disp_ratio
+
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video: {video_path}")
@@ -205,14 +217,15 @@ class WASBBallDetector:
             hms = logits.sigmoid().cpu().numpy()[0]  # (3, 288, 512)
 
             for k, fidx in enumerate(triplet_indices):
-                cands = postprocess_heatmap(hms[k], trans_inv)
+                cands = postprocess_heatmap(hms[k], trans_inv, threshold=score_threshold)
                 per_frame_candidates[fidx].extend(cands)
 
             for idx in list(tensors_cache):
                 if idx < start:
                     del tensors_cache[idx]
 
-        tracker = SimpleTracker(max_disp=300.0)
+        max_disp = max_disp_ratio * max(h, w)
+        tracker = SimpleTracker(max_disp=max_disp)
         ball_detections: dict[int, Ball] = {}
         for frame_id, cands in enumerate(per_frame_candidates):
             best = tracker.update(cands)
