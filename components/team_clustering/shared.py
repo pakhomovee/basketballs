@@ -92,7 +92,7 @@ def extract_track_embeddings_from_image(
 
     masks = embedder.get_player_masks_for_frame(image, [bbox for _, bbox in valid_entries])
     track_embeddings: dict[int, list[np.ndarray]] = {}
-    for (track_id, (x1, y1, x2, y2)), mask in zip(valid_entries, masks):
+    for (track_id, (x1, y1, x2, y2)), (mask, _polygon) in zip(valid_entries, masks):
         crop = image[y1:y2, x1:x2]
         embedding = embedder.extract_embedding(crop, mask).astype(np.float32)
         track_embeddings.setdefault(track_id, []).append(embedding)

@@ -4,16 +4,16 @@ from pathlib import Path
 import cv2
 
 from court_detector.court_detector import CourtDetector
+from common.classes import CourtType
 from team_clustering.embedding import PlayerEmbedder
-from team_clustering.mock_detector import MockDetector
 from team_clustering.team_clustering import TeamClustering
 from tracking import FlowTracker
 from visualization import write_2d_court_video, make_side_by_side_video
 from smoother import smooth_detection_coordinates
 from reidentification import extract_reid_embeddings
-from common.classes import CourtType
 from common.logger import get_logger
-from common.utils.utils import download
+from common.utils.models import ensure_models, get_model_paths
+from common.utils.utils import get_device
 from config import AppConfig, load_app_config
 from detector import Detector, enrich_detections_with_numbers, enrich_players_with_pose
 from detector.interpolate_ball_detections import linear_interpolate_ball_detections
@@ -28,44 +28,18 @@ from actions.passes import find_team_passes
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 COMPONENTS_DIR = Path(__file__).resolve().parent
-REPO_ROOT = COMPONENTS_DIR.parent
-MODELS_DIR = REPO_ROOT / "models"
-COURT_MODEL_PATH = MODELS_DIR / "court_detection_model.pt"
-DETECTOR_MODEL_PATH = MODELS_DIR / "detector_model.pt"
-PARSEQ_MODEL_PATH = MODELS_DIR / "parseq_flex.ckpt"
-REID_MODEL_PATH = MODELS_DIR / "reid_model.pth"
-SEG_MODEL_PATH = MODELS_DIR / "seg-model.pt"
-WASB_MODEL_PATH = MODELS_DIR / "wasb_basketball_best.pth.tar"
-DEFAULT_REID_WEIGHTS = str(REID_MODEL_PATH)
 
 
-def _ensure_default_models() -> None:
-    if not COURT_MODEL_PATH.exists():
-        download("https://disk.yandex.ru/d/VRabl680FfKBog", COURT_MODEL_PATH.name, str(MODELS_DIR))
-    if not DETECTOR_MODEL_PATH.exists():
-        download("https://disk.yandex.ru/d/KdtL0zaQQlI5fg", DETECTOR_MODEL_PATH.name, str(MODELS_DIR))
-    if not PARSEQ_MODEL_PATH.exists():
-        download("https://disk.yandex.ru/d/QucoCUmnUbLMHw", PARSEQ_MODEL_PATH.name, str(MODELS_DIR))
-    if not REID_MODEL_PATH.exists():
-        download("https://disk.yandex.ru/d/Ak2skkMBdVCqmQ", REID_MODEL_PATH.name, str(MODELS_DIR))
-    if not SEG_MODEL_PATH.exists():
-        download("https://disk.yandex.ru/d/dpjzmKkadg-nZg", SEG_MODEL_PATH.name, str(MODELS_DIR))
-    if not WASB_MODEL_PATH.exists():
-        download("https://disk.yandex.ru/d/JZQN5HEOKOegog", WASB_MODEL_PATH.name, str(MODELS_DIR))
-
-
-def _extract_embeddings(video_path, detections, enable_reid=True):
+def _extract_embeddings(video_path, detections, enable_reid=True, reid_path: str | None = None):
     """Extract color histograms (team clustering) and optionally ReID features (tracking)."""
     PlayerEmbedder().extract_player_embeddings(video_path, detections)
 
-    if enable_reid and os.path.isfile(DEFAULT_REID_WEIGHTS):
-        from common.utils.utils import get_device
-
+    if enable_reid and reid_path and os.path.isfile(reid_path):
         device = get_device()
-        print(f"Extracting ReID features for tracking ({DEFAULT_REID_WEIGHTS})")
-        extract_reid_embeddings(video_path, detections, DEFAULT_REID_WEIGHTS, device=device)
+        print(f"Extracting ReID features for tracking ({reid_path})")
+        extract_reid_embeddings(video_path, detections, reid_path, device=device)
     elif enable_reid:
-        print(f"ReID weights not found at {DEFAULT_REID_WEIGHTS}, tracker will use color histograms")
+        print(f"ReID weights not found at {reid_path!r}, tracker will use color histograms")
 
 
 def _get_video_frame_width(video_path: str) -> float | None:
@@ -112,11 +86,12 @@ def main(cfg: AppConfig):
     court_type = CourtType.NBA if main_cfg.court_type == "nba" else CourtType.FIBA
 
     get_logger().clear()
-    _ensure_default_models()
+    ensure_models(cfg)
+    paths = get_model_paths(cfg)
 
     # Detector
 
-    detector = Detector(conf_threshold=cfg.detector.initial_threshold)
+    detector = Detector(model_path=str(paths.detector), conf_threshold=cfg.detector.initial_threshold)
     all_detections = detector.detect_video(video_path)
     players_detections, referees_detections, numbers_detections = enrich_detections_with_numbers(
         video_path,
@@ -143,7 +118,7 @@ def main(cfg: AppConfig):
     possession_ball_detections = {frame_id: [ball] for frame_id, ball in interpolated_ball_by_frame.items()}
 
     # Tracker
-    _extract_embeddings(video_path, players_detections, enable_reid=not main_cfg.no_reid)
+    _extract_embeddings(video_path, players_detections, enable_reid=not main_cfg.no_reid, reid_path=str(paths.reid))
 
     video_fps = _get_video_fps(video_path)
     frame_width = _get_video_frame_width(video_path)

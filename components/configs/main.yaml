@@ -64,3 +64,19 @@ team_clustering:
     torso_sigma_x: 0.18
     torso_sigma_y: 0.18
     skin_weight: 0.15
+
+models:
+  # Optional override for where model files are stored (default: <repo_root>/models)
+  models_dir: null
+  court_detection_filename: "court_detection_model.pt"
+  court_detection_url: "https://disk.yandex.ru/d/VRabl680FfKBog"
+  detector_filename: "detector_model.pt"
+  detector_url: "https://disk.yandex.ru/d/KdtL0zaQQlI5fg"
+  parseq_filename: "parseq_flex.ckpt"
+  parseq_url: "https://disk.yandex.ru/d/QucoCUmnUbLMHw"
+  reid_filename: "reid_model.pth"
+  reid_url: "https://disk.yandex.ru/d/Ak2skkMBdVCqmQ"
+  seg_filename: "seg-model.pt"
+  seg_url: "https://disk.yandex.ru/d/dpjzmKkadg-nZg"
+  wasb_filename: "wasb_basketball_best.pth.tar"
+  wasb_url: "https://disk.yandex.ru/d/JZQN5HEOKOegog"

@@ -27,3 +27,8 @@ tqdm>=4.65
 pyyaml>=6.0
 pandas>=2.0
 pydantic>=2.0
+
+# Web
+uvicorn
+fastapi
+aiosqlite

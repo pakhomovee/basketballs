@@ -22,14 +22,40 @@ jobs:
       - name: Install ruff
         run: pip install ruff
 
-      - name: Lint Python (respecting line length)
+      - name: Lint Python
         run: |
-          # If pyproject.toml or ruff.toml exists, ruff uses it automatically.
-          # Otherwise, we force the line length from the env var.
           if [ -f pyproject.toml ] || [ -f ruff.toml ]; then
-            echo "Using configuration from pyproject.toml/ruff.toml"
             ruff check .
           else
-            echo "Using command-line line-length: ${PY_LINE_LENGTH}"
             ruff check . --line-length ${PY_LINE_LENGTH}
           fi
+
+      - name: Check Python formatting
+        run: ruff format --check .
+
+  frontend-style:
+    name: Frontend Codestyle
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: components/web/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Generate SvelteKit types
+        run: npx svelte-kit sync
+
+      - name: Type-check (svelte-check)
+        run: npm run check
+
+      - name: Check formatting (prettier)
+        run: npm run format:check
