@@ -3,5 +3,5 @@ defaults:
   - override /model: parseq
 
 model:
-  img_size: [ 224, 224 ]  # [ height, width ]
-  patch_size: [ 16, 16 ]  # [ height, width ]
+  img_size: [224, 224] # [ height, width ]
+  patch_size: [16, 16] # [ height, width ]

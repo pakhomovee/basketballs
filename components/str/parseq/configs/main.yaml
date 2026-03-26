@@ -6,7 +6,7 @@ defaults:
 
 model:
   _convert_: all
-  img_size: [ 32, 128 ]  # [ height, width ]
+  img_size: [32, 128] # [ height, width ]
   #max_label_length: 25
   max_label_length: 2
   # The ordering in charset_train matters. It determines the token IDs assigned to each character.
@@ -16,7 +16,7 @@ model:
   charset_test: "0123456789"
   batch_size: 384
   weight_decay: 0.0
-  warmup_pct: 0.075  # equivalent to 1.5 epochs of warm up
+  warmup_pct: 0.075 # equivalent to 1.5 epochs of warm up
 
 data:
   _target_: strhub.data.module.SceneTextDataModule

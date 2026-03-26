@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # Run backend + frontend locally without Docker.
-# Usage: ./dev.sh [--port-backend 8000] [--port-frontend 5173]
+# Usage: ./dev.sh [--port-backend 8000] [--port-frontend 5173] [--view-only]
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 WEB_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_PORT=8000
 FRONTEND_PORT=5173
+VIEW_ONLY=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --port-backend) BACKEND_PORT="$2"; shift 2 ;;
     --port-frontend) FRONTEND_PORT="$2"; shift 2 ;;
+    --view-only) VIEW_ONLY=true; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -53,7 +55,7 @@ echo "▶ Starting frontend on http://localhost:${FRONTEND_PORT}"
     echo "Installing dependencies"
     npm install
   fi
-  npm run dev -- --port "${FRONTEND_PORT}"
+  VITE_VIEW_ONLY="${VIEW_ONLY}" npm run dev -- --port "${FRONTEND_PORT}"
 ) &
 PIDS+=($!)
 

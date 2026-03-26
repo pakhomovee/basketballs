@@ -12,9 +12,10 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
 	return res.json();
 }
 
-export async function uploadVideo(file: File): Promise<string> {
+export async function uploadVideo(file: File, name?: string): Promise<string> {
 	const form = new FormData();
 	form.append('file', file);
+	if (name && name.trim()) form.append('name', name.trim());
 	const data = await fetchJSON<{ job_id: string }>(`${BASE}/videos`, {
 		method: 'POST',
 		body: form

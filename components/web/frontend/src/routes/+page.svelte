@@ -3,10 +3,14 @@
 	import { uploadVideo, listJobs, getProgress } from '$lib/api';
 	import type { Job } from '$lib/types';
 
+	const VIEW_ONLY = import.meta.env.VITE_VIEW_ONLY === 'true';
+
 	let jobs = $state<Job[]>([]);
 	let uploading = $state(false);
 	let dragOver = $state(false);
 	let error = $state('');
+	let pendingFile = $state<File | null>(null);
+	let videoName = $state('');
 	let progressMap = $state<Record<string, { stage: string; pct: number }>>({});
 	let pollTimer: ReturnType<typeof setInterval>;
 
@@ -41,10 +45,20 @@
 			error = 'Please upload a video file';
 			return;
 		}
+		// Show name input before uploading.
+		pendingFile = file;
+		videoName = file.name.replace(/\.[^.]+$/, ''); // pre-fill without extension
+	}
+
+	async function confirmUpload() {
+		if (!pendingFile) return;
 		uploading = true;
 		error = '';
+		const file = pendingFile;
+		pendingFile = null;
 		try {
-			await uploadVideo(file);
+			await uploadVideo(file, videoName);
+			videoName = '';
 			await loadJobs();
 		} catch (e: any) {
 			error = e.message || 'Upload failed';
@@ -84,46 +98,91 @@
 </svelte:head>
 
 <main class="max-w-6xl mx-auto px-6 py-10">
-	<!-- Upload Area -->
-	<div
-		class="border-2 border-dashed rounded-2xl p-12 text-center transition-colors cursor-pointer
-			{dragOver
-			? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5'
-			: 'border-[var(--color-border)] hover:border-[var(--color-text-muted)]'}"
-		role="button"
-		tabindex="0"
-		ondragover={(e) => {
-			e.preventDefault();
-			dragOver = true;
-		}}
-		ondragleave={() => {
-			dragOver = false;
-		}}
-		ondrop={onDrop}
-		onclick={() => document.getElementById('file-input')?.click()}
-		onkeydown={(e) => {
-			if (e.key === 'Enter') document.getElementById('file-input')?.click();
-		}}
-	>
-		<input id="file-input" type="file" accept="video/*" class="hidden" onchange={onFileInput} />
-		{#if uploading}
-			<div class="flex items-center justify-center gap-3">
-				<div
-					class="w-6 h-6 border-2 border-[var(--color-accent)] border-t-transparent rounded-full animate-spin"
-				></div>
-				<span class="text-[var(--color-text-muted)]">Uploading…</span>
+	{#if !VIEW_ONLY}
+		<!-- Drop zone -->
+		{#if !pendingFile && !uploading}
+			<div
+				class="border-2 border-dashed rounded-2xl p-12 text-center transition-colors cursor-pointer
+					{dragOver
+					? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5'
+					: 'border-[var(--color-border)] hover:border-[var(--color-text-muted)]'}"
+				role="button"
+				tabindex="0"
+				ondragover={(e) => {
+					e.preventDefault();
+					dragOver = true;
+				}}
+				ondragleave={() => {
+					dragOver = false;
+				}}
+				ondrop={onDrop}
+				onclick={() => document.getElementById('file-input')?.click()}
+				onkeydown={(e) => {
+					if (e.key === 'Enter') document.getElementById('file-input')?.click();
+				}}
+			>
+				<input id="file-input" type="file" accept="video/*" class="hidden" onchange={onFileInput} />
+				<div class="text-4xl mb-3">🏀</div>
+				<p class="text-lg font-medium text-[var(--color-text)]">
+					Drop a video here or click to upload
+				</p>
+				<p class="text-sm text-[var(--color-text-muted)] mt-2">
+					MP4 — up to 10 seconds (for best results)
+				</p>
 			</div>
-		{:else}
-			<div class="text-4xl mb-3">🏀</div>
-			<p class="text-lg font-medium text-[var(--color-text)]">
-				Drop a video here or click to upload
-			</p>
-			<p class="text-sm text-[var(--color-text-muted)] mt-2">MP4, MOV, AVI — up to 2 GB</p>
 		{/if}
-	</div>
 
-	{#if error}
-		<p class="mt-4 text-sm text-red-400">{error}</p>
+		<!-- Name confirmation step -->
+		{#if pendingFile}
+			<div class="border rounded-2xl p-8 bg-[var(--color-surface)]">
+				<p class="text-sm text-[var(--color-text-muted)] mb-1">Selected file</p>
+				<p class="font-medium mb-5 truncate">{pendingFile.name}</p>
+				<label class="block text-sm font-medium mb-1.5" for="video-name-input">Video name</label>
+				<input
+					id="video-name-input"
+					type="text"
+					bind:value={videoName}
+					placeholder="Enter a display name…"
+					class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] mb-5"
+					onkeydown={(e) => {
+						if (e.key === 'Enter') confirmUpload();
+					}}
+				/>
+				<div class="flex gap-3">
+					<button
+						onclick={confirmUpload}
+						class="flex-1 rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90 transition-opacity"
+					>
+						Upload &amp; Process
+					</button>
+					<button
+						onclick={() => {
+							pendingFile = null;
+							videoName = '';
+						}}
+						class="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+					>
+						Cancel
+					</button>
+				</div>
+			</div>
+		{/if}
+
+		<!-- Uploading spinner -->
+		{#if uploading}
+			<div class="border-2 border-dashed rounded-2xl p-12 text-center border-[var(--color-border)]">
+				<div class="flex items-center justify-center gap-3">
+					<div
+						class="w-6 h-6 border-2 border-[var(--color-accent)] border-t-transparent rounded-full animate-spin"
+					></div>
+					<span class="text-[var(--color-text-muted)]">Uploading…</span>
+				</div>
+			</div>
+		{/if}
+
+		{#if error}
+			<p class="mt-4 text-sm text-red-400">{error}</p>
+		{/if}
 	{/if}
 
 	<!-- Videos Grid -->
@@ -137,7 +196,7 @@
 						{job.status === 'done' ? 'hover:bg-[var(--color-surface-hover)] cursor-pointer' : 'cursor-default'}"
 				>
 					<div class="flex items-center justify-between mb-3">
-						<span class="font-medium truncate mr-3">{job.video_name}</span>
+						<span class="font-medium truncate mr-3">{job.display_name ?? job.video_name}</span>
 						<span
 							class="text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap {statusColor(
 								job.status
