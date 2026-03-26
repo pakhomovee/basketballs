@@ -51,14 +51,14 @@ class CourtDetector:
         self.cfg = cfg
         if device is None:
             device = get_device()
+        if model_path is None:
+            from common.utils.models import get_model_paths
+
+            model_path = get_model_paths(cfg).court_detection
         self.device = device
         if model_pretrained is not None:
             self.model = YOLO(model_pretrained)
         else:
-            if model_path is None:
-                from common.utils.models import get_model_paths
-
-                model_path = get_model_paths(cfg).court_detection
             self.model = YOLO(model_path)
         self.model.to(self.device)
         self.model_path = model_path
