@@ -49,6 +49,7 @@ export interface Job {
 	id: string;
 	status: JobStatus;
 	video_name: string;
+	display_name: string | null;
 	created_at: string;
 	error: string | null;
 }

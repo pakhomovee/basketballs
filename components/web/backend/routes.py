@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .database import (
@@ -57,7 +57,7 @@ def _sanitize_filename(name: str) -> str:
 
 
 @router.post("/videos", response_model=UploadResponse)
-async def upload_video(file: UploadFile):
+async def upload_video(file: UploadFile, name: str | None = Form(default=None)):
     if file.filename is None:
         raise HTTPException(400, "No filename provided")
 
@@ -79,7 +79,8 @@ async def upload_video(file: UploadFile):
     db = await get_db()
     try:
         now = datetime.now(timezone.utc).isoformat()
-        await create_job(db, jid, safe_name, now)
+        display_name = name.strip() if name and name.strip() else None
+        await create_job(db, jid, safe_name, now, display_name=display_name)
     finally:
         await db.close()
 

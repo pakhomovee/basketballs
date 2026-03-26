@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     status TEXT NOT NULL DEFAULT 'queued',
     video_name TEXT NOT NULL,
+    display_name TEXT,
     created_at TEXT NOT NULL,
     error TEXT
 );
@@ -31,13 +32,25 @@ async def get_db() -> aiosqlite.Connection:
     db = await aiosqlite.connect(str(DB_PATH))
     db.row_factory = aiosqlite.Row
     await db.executescript(_SCHEMA)
+    # Migrate existing databases that lack the display_name column.
+    try:
+        await db.execute("ALTER TABLE jobs ADD COLUMN display_name TEXT")
+        await db.commit()
+    except Exception:
+        pass  # Column already exists
     return db
 
 
-async def create_job(db: aiosqlite.Connection, job_id: str, video_name: str, created_at: str) -> None:
+async def create_job(
+    db: aiosqlite.Connection,
+    job_id: str,
+    video_name: str,
+    created_at: str,
+    display_name: str | None = None,
+) -> None:
     await db.execute(
-        "INSERT INTO jobs (id, status, video_name, created_at) VALUES (?, 'queued', ?, ?)",
-        (job_id, video_name, created_at),
+        "INSERT INTO jobs (id, status, video_name, display_name, created_at) VALUES (?, 'queued', ?, ?, ?)",
+        (job_id, video_name, display_name, created_at),
     )
     await db.commit()
 

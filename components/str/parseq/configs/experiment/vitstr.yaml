@@ -3,5 +3,5 @@ defaults:
   - override /model: vitstr
 
 model:
-  img_size: [ 32, 128 ]  # [ height, width ]
-  patch_size: [ 4, 8 ]  # [ height, width ]
+  img_size: [32, 128] # [ height, width ]
+  patch_size: [4, 8] # [ height, width ]

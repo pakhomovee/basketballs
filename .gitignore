@@ -45,6 +45,10 @@ components/web/frontend/.svelte-kit/
 components/web/frontend/build/
 components/web/frontend/package-lock.json
 
+# Root-level components tooling (prettier etc.)
+components/node_modules/
+components/package-lock.json
+
 # Runtime storage (SQLite DB, uploaded videos, generated annotations)
 components/web/storage/
 

@@ -9,6 +9,7 @@ class JobResponse(BaseModel):
     id: str
     status: str  # queued | processing | done | failed
     video_name: str
+    display_name: str | None = None
     created_at: str
     error: str | None = None
 
