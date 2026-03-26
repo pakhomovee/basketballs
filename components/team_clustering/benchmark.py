@@ -4,7 +4,10 @@ import argparse
 import json
 from pathlib import Path
 
+from common.utils.datasets import ensure_dataset
+from common.utils.models import ensure_models
 from common.utils.utils import get_device
+from config import load_default_config
 from team_clustering.shared import (
     DEFAULT_SEG_MODEL,
     evaluate_team_split,
@@ -41,7 +44,7 @@ def run_team_clustering_benchmark(
     from team_clustering.embedding import PlayerEmbedder
 
     entries = _load_entries(ground_truth_path, limit=limit)
-    embedder = PlayerEmbedder(str(resolve_repo_path(seg_model)), get_device())
+    embedder = PlayerEmbedder(str(resolve_repo_path(seg_model)), device=get_device())
     results = {
         "accuracy": 0.0,
         "correct": 0,
@@ -80,14 +83,23 @@ def _print_results(results: dict[str, int | float]) -> None:
 
 
 def main() -> None:
+    cfg = load_default_config()
+    ensure_models(cfg)
+
     parser = argparse.ArgumentParser(description="Run team clustering benchmark from image ground truth")
-    parser.add_argument("ground_truth", help="Path to JSON file with image_path, bboxes, and team_labels")
+    parser.add_argument(
+        "ground_truth",
+        nargs="?",
+        default=None,
+        help="Path to JSON file with image_path, bboxes, and team_labels. Defaults to the path configured in main.yaml.",
+    )
     parser.add_argument("--seg-model", default=str(DEFAULT_SEG_MODEL), help="YOLO segmentation checkpoint")
     parser.add_argument("--limit", type=int, default=None, help="Only evaluate the first N entries")
     args = parser.parse_args()
 
+    ground_truth = args.ground_truth or str(ensure_dataset(cfg.benchmarks.team_clustering.dataset))
     results = run_team_clustering_benchmark(
-        ground_truth_path=args.ground_truth,
+        ground_truth_path=ground_truth,
         seg_model=args.seg_model,
         limit=args.limit,
     )

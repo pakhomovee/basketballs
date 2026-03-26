@@ -91,6 +91,8 @@ class EmbeddingConfig(BaseModel):
 
 class TeamClusteringConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    n_clusters: int = 2
     embedding: EmbeddingConfig = EmbeddingConfig()
 
 
@@ -121,6 +123,44 @@ class ModelConfig(BaseModel):
     wasb_url: str = "https://disk.yandex.ru/d/JZQN5HEOKOegog"
 
 
+class BenchmarkDataset(BaseModel):
+    """Download URL and local path for a benchmark dataset."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = ""
+    path: str = ""
+
+
+class TrackingBenchmarkConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dataset: BenchmarkDataset = BenchmarkDataset(
+        url="https://disk.yandex.ru/d/k3Y4Jd6q3tzb7g",
+        path="dataset/tracking_benchmark",
+    )
+
+
+class TeamClusteringBenchmarkConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dataset: BenchmarkDataset = BenchmarkDataset(
+        url="https://disk.yandex.ru/d/ZysZXjH19LOt7w",
+        path="dataset/team_clustering_benchmark/ground_truth.json",
+    )
+    multishot_dataset: BenchmarkDataset = BenchmarkDataset(
+        url="https://disk.yandex.ru/d/62VTwq6mKOx4RQ",
+        path="dataset/team_clustering_benchmark/multishot",
+    )
+
+
+class BenchmarksConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tracking: TrackingBenchmarkConfig = TrackingBenchmarkConfig()
+    team_clustering: TeamClusteringBenchmarkConfig = TeamClusteringBenchmarkConfig()
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     main: MainConfig = MainConfig()
@@ -130,6 +170,7 @@ class AppConfig(BaseModel):
     tracker: TrackerConfig = TrackerConfig()
     team_clustering: TeamClusteringConfig = TeamClusteringConfig()
     models: ModelConfig = ModelConfig()
+    benchmarks: BenchmarksConfig = BenchmarksConfig()
 
 
 def load_app_config(config_path: str | Path) -> AppConfig:

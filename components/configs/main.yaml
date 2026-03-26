@@ -53,6 +53,7 @@ tracker:
   occlusion_start_pass: 2
 
 team_clustering:
+  n_clusters: 2
   embedding:
     hue_bins: 12
     saturation_bins: 8
@@ -80,3 +81,16 @@ models:
   seg_url: "https://disk.yandex.ru/d/dpjzmKkadg-nZg"
   wasb_filename: "wasb_basketball_best.pth.tar"
   wasb_url: "https://disk.yandex.ru/d/JZQN5HEOKOegog"
+
+benchmarks:
+  tracking:
+    dataset:
+      url: "https://disk.yandex.ru/d/k3Y4Jd6q3tzb7g"
+      path: "dataset/tracking_benchmark"
+  team_clustering:
+    dataset:
+      url: "https://disk.yandex.ru/d/ZysZXjH19LOt7w"
+      path: "dataset/team_clustering_benchmark/ground_truth.json"
+    multishot_dataset:
+      url: "https://disk.yandex.ru/d/62VTwq6mKOx4RQ"
+      path: "dataset/team_clustering_benchmark/multishot"

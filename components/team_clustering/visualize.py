@@ -164,7 +164,7 @@ def collect_video_mask_samples(
     """Sample player masks from a video by running person segmentation on every Nth frame."""
     video_path = str(resolve_repo_path(video_path))
     seg_model = str(resolve_repo_path(seg_model))
-    embedder = PlayerEmbedder(seg_model, get_device())
+    embedder = PlayerEmbedder(seg_model, device=get_device())
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():

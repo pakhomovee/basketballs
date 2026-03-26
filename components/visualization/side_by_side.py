@@ -30,6 +30,7 @@ _TEAM_COLORS = {
     1: (255, 100, 0),  # blue
 }
 _TEAM_UNKNOWN_COLOR = (0, 255, 0)  # green
+_UNTRACKED_COLOR = (110, 110, 110)  # grey — player_id == -1 (no valid track)
 # BGR color for the jersey number box (top-right of player bbox)
 _NUMBER_BOX_COLOR = (0, 0, 255)  # bright red
 _NUMBER_BOX_PAD = 4
@@ -240,7 +241,10 @@ def make_side_by_side_video(
                 for player in detections[frame_id]:
                     if player.bbox:
                         x1, y1, x2, y2 = map(int, player.bbox)
-                        color = _TEAM_COLORS.get(player.team_id, _TEAM_UNKNOWN_COLOR)
+                        if player.player_id == -1:
+                            color = _UNTRACKED_COLOR
+                        else:
+                            color = _TEAM_COLORS.get(player.team_id, _TEAM_UNKNOWN_COLOR)
                         cv2.rectangle(frame_top, (x1, y1), (x2, y2), color, 2)
                         # Draw skeleton if available
                         if getattr(player, "skeleton", None) is not None:

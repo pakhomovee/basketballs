@@ -20,6 +20,9 @@ const LIMBS: [number, number][] = [
 ];
 
 export function playerColor(p: PlayerAnnotation, colorMode: 'team' | 'id', alpha = false): string {
+	if (p.player_id < 0) {
+		return alpha ? 'rgba(140,140,140,0.3)' : '#8c8c8c';
+	}
 	if (colorMode === 'id') {
 		const hue = (Math.abs(p.player_id) * 137) % 360;
 		return alpha ? `hsla(${hue},70%,60%,0.3)` : `hsl(${hue},70%,60%)`;
@@ -76,6 +79,7 @@ export function drawAnnotations(
 	if (toggles.masks) {
 		for (const p of fd.players) {
 			if (!p.mask_polygon) continue;
+			if (p.player_id < 0 && toggles.colorMode !== 'id') continue;
 			ctx.save();
 			// Clip to the player's bounding box so the mask never bleeds outside it.
 			if (p.bbox) {
@@ -101,6 +105,7 @@ export function drawAnnotations(
 	if (toggles.bboxes) {
 		for (const p of fd.players) {
 			if (!p.bbox) continue;
+			if (p.player_id < 0 && toggles.colorMode !== 'id') continue;
 			const [x1, y1, x2, y2] = p.bbox;
 			ctx.strokeStyle = playerColor(p, toggles.colorMode);
 			ctx.lineWidth = 2;

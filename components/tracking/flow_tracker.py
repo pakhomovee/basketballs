@@ -231,13 +231,17 @@ class FlowTracker:
             past_color_embs: dict[int, np.ndarray] | None = None
             future_color_embs: dict[int, np.ndarray] | None = None
             if tracks is not None:
-                past_embs, future_embs, past_color_embs, future_color_embs = self._compute_tracklet_embeddings(
+                (
+                    past_embs,
+                    future_embs,
+                    past_color_embs,
+                    future_color_embs,
+                ) = self._compute_tracklet_embeddings(
                     tracks,
                     det_list,
                     lookback,
                 )
                 lookback *= 2
-                self.w_app *= 0.8
 
             tracks = self._solve_pass(
                 det_list,
@@ -282,7 +286,7 @@ class FlowTracker:
         dict[int, np.ndarray],
         dict[int, np.ndarray],
     ]:
-        """Directional mean embeddings (reid + color) for each tracked detection.
+        """Directional mean reid and color embeddings for each tracked detection.
 
         Returns
         -------
@@ -298,9 +302,10 @@ class FlowTracker:
         for track in tracks:
             for pos, det_idx in enumerate(track):
                 past_start = max(0, pos - lookback)
+                past_slice = track[past_start : pos + 1]
                 past_reid: list[np.ndarray] = []
                 past_color: list[np.ndarray] = []
-                for s_idx in track[past_start : pos + 1]:
+                for s_idx in past_slice:
                     player = det_list[s_idx][1]
                     emb = player.reid_embedding if player.reid_embedding is not None else player.embedding
                     if emb is not None:
@@ -313,9 +318,10 @@ class FlowTracker:
                     past_color_embs[det_idx] = np.mean(past_color, axis=0)
 
                 future_end = min(len(track), pos + lookback + 1)
+                future_slice = track[pos:future_end]
                 future_reid: list[np.ndarray] = []
                 future_color: list[np.ndarray] = []
-                for s_idx in track[pos:future_end]:
+                for s_idx in future_slice:
                     player = det_list[s_idx][1]
                     emb = player.reid_embedding if player.reid_embedding is not None else player.embedding
                     if emb is not None:
@@ -485,7 +491,6 @@ class FlowTracker:
                             )
                             if ext is not None:
                                 cost += self.w_extended * ext
-
                         mcf.add_edge(
                             _det_out(i, n_det),
                             _det_in(j, n_det),
@@ -690,7 +695,10 @@ class FlowTracker:
     # ------------------------------------------------------------------
 
     def _appearance_cost(self, player_i, player_j) -> float | None:
-        """Appearance-only cosine distance (None when either embedding is missing)."""
+        """Appearance-only cost (None when either embedding is missing).
+
+        Uses reid_embedding when available, falls back to color embedding.
+        """
         emb_i = player_i.reid_embedding if player_i.reid_embedding is not None else player_i.embedding
         emb_j = player_j.reid_embedding if player_j.reid_embedding is not None else player_j.embedding
         if emb_i is None or emb_j is None:

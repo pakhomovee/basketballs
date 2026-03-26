@@ -11,7 +11,10 @@ if __package__ in (None, ""):
 
 import numpy as np
 
+from common.utils.datasets import ensure_dataset
+from common.utils.models import ensure_models
 from common.utils.utils import get_device
+from config import load_default_config
 from team_clustering.embedding import PlayerEmbedder
 from team_clustering.shared import (
     DEFAULT_SEG_MODEL,
@@ -136,7 +139,7 @@ def run_multishot_team_clustering_benchmark(
     if limit is not None:
         sample_ids = sample_ids[:limit]
 
-    embedder = PlayerEmbedder(str(resolve_repo_path(seg_model)), get_device())
+    embedder = PlayerEmbedder(str(resolve_repo_path(seg_model)), device=get_device())
     single_frame_metrics: list[dict[str, int | float | str]] = []
     results = {
         "accuracy": 0.0,
@@ -178,15 +181,24 @@ def _print_results(results: dict[str, int | float]) -> None:
 
 
 def main() -> None:
+    cfg = load_default_config()
+    ensure_models(cfg)
+
     parser = argparse.ArgumentParser(description="Run team clustering benchmark on multishot samples")
-    parser.add_argument("multishot_root", nargs="?", default=str(DEFAULT_MULTISHOT_ROOT))
+    parser.add_argument(
+        "multishot_root",
+        nargs="?",
+        default=None,
+        help="Multishot dataset root directory. Defaults to the path configured in main.yaml.",
+    )
     parser.add_argument("--seg-model", default=str(DEFAULT_SEG_MODEL))
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args()
 
+    multishot_root = args.multishot_root or str(ensure_dataset(cfg.benchmarks.team_clustering.multishot_dataset))
     _print_results(
         run_multishot_team_clustering_benchmark(
-            multishot_root=args.multishot_root,
+            multishot_root=multishot_root,
             seg_model=args.seg_model,
             limit=args.limit,
         )
