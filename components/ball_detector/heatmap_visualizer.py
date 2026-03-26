@@ -118,4 +118,3 @@ def _parse_args():
 if __name__ == "__main__":
     args = _parse_args()
     visualize_heatmaps(args.input_path, args.output_path, step=args.step, alpha=args.alpha)
-

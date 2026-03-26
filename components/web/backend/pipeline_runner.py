@@ -1,7 +1,7 @@
 """Run the basketball tracking pipeline on uploaded videos.
 
-Imports from the existing ``components/`` package and orchestrates the same
-stages as ``components/main.py``, outputting an annotation JSON file.
+Uses the shared pipeline implementation in ``components/run_pipeline.py`` and
+exports annotations for the web viewer.
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ import os
 import sys
 import traceback
 from pathlib import Path
+
+from run_pipeline import TOTAL_STAGES as PIPELINE_TOTAL_STAGES, run_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +34,6 @@ def job_dir(job_id: str) -> Path:
     return STORAGE_DIR / "jobs" / job_id
 
 
-# Progress helpers
-
-TOTAL_STAGES = 11
-
-
 def _save_progress(job_id: str, label: str, pct: float) -> None:
     try:
         (job_dir(job_id) / "progress.txt").write_text(
@@ -47,121 +44,32 @@ def _save_progress(job_id: str, label: str, pct: float) -> None:
         pass
 
 
-@contextlib.contextmanager
-def _stage(job_id: str, label: str, stage_idx: int):
-    """Context manager: writes stage progress at start and end."""
-    _save_progress(job_id, label, stage_idx / TOTAL_STAGES)
-    try:
-        yield
-    finally:
-        _save_progress(job_id, label, (stage_idx + 1) / TOTAL_STAGES)
+class _JobStageLogger:
+    def __init__(self, job_id: str, total_stages: int):
+        self.job_id = job_id
+        self.total_stages = total_stages
+
+    def set_stage(self, label: str, stage_idx: int) -> None:
+        pct = float(stage_idx) / float(self.total_stages) if self.total_stages > 0 else 0.0
+        _save_progress(self.job_id, label, pct)
 
 
 def _run_pipeline(job_id: str, video_path: str) -> None:
     """Synchronous pipeline execution (runs in a thread)."""
-    import cv2
-
-    from court_detector.court_detector import CourtDetector
-    from team_clustering.embedding import PlayerEmbedder
-    from team_clustering.team_clustering import TeamClustering
-    from tracking import FlowTracker
-    from smoother import smooth_detection_coordinates
-    from reidentification import extract_reid_embeddings
-    from common.utils.utils import get_device
-    from common.utils.models import ensure_models, get_model_paths
     from config import load_default_config
-    from detector import Detector, enrich_detections_with_numbers, enrich_players_with_pose
-    from detector.interpolate_ball_detections import linear_interpolate_ball_detections
-    from ball_detector.detector import WASBBallDetector
-    from actions.ball_possession import (
-        assign_ball_possession_soft_dribble,
-        apply_possession_segments,
-        greedy_possession_segments_soft_dribble,
-    )
     from annotation_exporter import export_annotations, save_annotations
 
     cfg = load_default_config()
 
-    # Stage 0 — model check (no tqdm)
-    with _stage(job_id, "Checking models…", 0):
-        ensure_models(cfg)
+    total_stages = PIPELINE_TOTAL_STAGES + 1  # pipeline + export
+    stage_logger = _JobStageLogger(job_id, total_stages=total_stages)
+    result = run_pipeline(video_path, cfg, stage_logger=stage_logger)
 
-    paths = get_model_paths(cfg)
-
-    # Stage 1 — detect
-    with _stage(job_id, "Step 1/10 — Detecting players…", 1):
-        detector = Detector(model_path=str(paths.detector), conf_threshold=cfg.detector.initial_threshold)
-        all_detections = detector.detect_video(video_path)
-
-    # Stage 2 — jersey numbers
-    with _stage(job_id, "Step 2/10 — Recognising jersey numbers…", 2):
-        players_detections, _referees, _numbers = enrich_detections_with_numbers(
-            video_path,
-            all_detections,
-            player_conf_threshold=cfg.detector.player_conf_threshold,
-            referee_conf_threshold=cfg.detector.referee_conf_threshold,
-            number_conf_threshold=cfg.detector.number_conf_threshold,
-            ocr_conf_threshold=cfg.detector.ocr_conf_threshold,
-        )
-
-    # Stage 3 — pose estimation
-    with _stage(job_id, "Step 3/10 — Estimating poses…", 3):
-        enrich_players_with_pose(video_path, players_detections)
-
-    # Stage 4 — court detection
-    with _stage(job_id, "Step 4/10 — Detecting court…", 4):
-        court_detector = CourtDetector(model_path=str(paths.court_detection), cfg=cfg)
-        court_detector.run(video_path, players_detections)
-
-    # Stage 5 — ball detection
-    with _stage(job_id, "Step 5/10 — Detecting ball…", 5):
-        cap = cv2.VideoCapture(video_path)
-        fps = float(cap.get(cv2.CAP_PROP_FPS) or 30)
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        cap.release()
-        wasb_detector = WASBBallDetector(weights_path=str(paths.wasb), cfg=cfg)
-        raw_ball_detections = wasb_detector.detect_video(video_path)
-        interpolated = linear_interpolate_ball_detections(raw_ball_detections)
-        ball_detections = {fid: [b] for fid, b in interpolated.items()}
-
-    # Stage 6 — colour embeddings & mask polygons
-    with _stage(job_id, "Step 6/10 — Extracting colour embeddings & masks…", 6):
-        PlayerEmbedder().extract_player_embeddings(video_path, players_detections)
-
-    # Stage 7 — ReID embeddings (optional)
-    with _stage(job_id, "Step 7/10 — Extracting ReID embeddings…", 7):
-        if os.path.isfile(str(paths.reid)):
-            device = get_device()
-            extract_reid_embeddings(video_path, players_detections, str(paths.reid), device=device)
-
-    # Stage 8 — tracking
-    with _stage(job_id, "Step 8/10 — Running tracker…", 8):
-        frame_width = float(width)
-        tracker = FlowTracker(cfg=cfg, frame_width=frame_width, fps=fps)
-        tracker.track(players_detections)
-
-    # Stage 9 — team clustering
-    with _stage(job_id, "Step 9/10 — Clustering teams…", 9):
-        team_clustering = TeamClustering()
-        team_clustering.run(players_detections)
-
-    # Stage 10 — possession, smoothing + export
-    with _stage(job_id, "Step 10/10 — Possession, smoothing & exporting…", 10):
-        assign_ball_possession_soft_dribble(players_detections, ball_detections)
-        possession_segments = greedy_possession_segments_soft_dribble(players_detections, fps=fps)
-        apply_possession_segments(players_detections, possession_segments)
-        smooth_detection_coordinates(players_detections)
-        video_meta = {
-            "fps": round(fps, 2),
-            "width": width,
-            "height": height,
-            "total_frames": total_frames,
-            "video_name": Path(video_path).name,
-        }
-        annotation_data = export_annotations(players_detections, ball_detections, video_meta)
-        save_annotations(annotation_data, job_dir(job_id) / "annotations.json")
+    # Export is an extra step on top of the shared pipeline.
+    stage_logger.set_stage("Exporting annotations…", PIPELINE_TOTAL_STAGES)
+    annotation_data = export_annotations(result.players_detections, result.ball_detections, result.video_meta)
+    save_annotations(annotation_data, job_dir(job_id) / "annotations.json")
+    stage_logger.set_stage("Done", total_stages)
 
 
 # Async job queue — single worker
