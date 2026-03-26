@@ -121,6 +121,7 @@
 
 		// Draw players on top
 		for (const p of fd.players) {
+			if (p.player_id < 0) continue;
 			if (!p.court_position) continue;
 			const [cx, cy] = courtToCanvas(p.court_position[0], p.court_position[1]);
 			const color = playerColor(p.team_id, p.player_id);
@@ -133,12 +134,10 @@
 			ctx.lineWidth = 1;
 			ctx.stroke();
 
-			if (p.player_id >= 0) {
-				ctx.fillStyle = '#fff';
-				ctx.font = 'bold 8px Inter, sans-serif';
-				ctx.textAlign = 'center';
-				ctx.fillText(String(p.player_id), cx, cy - 7);
-			}
+			ctx.fillStyle = '#fff';
+			ctx.font = 'bold 8px Inter, sans-serif';
+			ctx.textAlign = 'center';
+			ctx.fillText(String(p.player_id), cx, cy - 7);
 		}
 	}
 

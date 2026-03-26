@@ -162,7 +162,7 @@ def run_pipeline(
     pass_events = find_team_passes(possession_segments, players_detections)
 
     if main_cfg.enable_smoothing:
-        smooth_detection_coordinates(players_detections)
+        smooth_detection_coordinates(players_detections, cfg=cfg)
 
     video_meta = _get_video_meta(video_path)
     stage_logger.set_stage("Done", TOTAL_STAGES)
