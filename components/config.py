@@ -161,6 +161,15 @@ class BenchmarksConfig(BaseModel):
     team_clustering: TeamClusteringBenchmarkConfig = TeamClusteringBenchmarkConfig()
 
 
+class SmootherConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    obs_noise: float = 0.1
+    process_noise_pos: float = 0.01
+    process_noise_vel: float = 0.1
+    max_gap_frames: int = 45
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     main: MainConfig = MainConfig()
@@ -169,6 +178,7 @@ class AppConfig(BaseModel):
     detector: DetectorConfig = DetectorConfig()
     tracker: TrackerConfig = TrackerConfig()
     team_clustering: TeamClusteringConfig = TeamClusteringConfig()
+    smoother: SmootherConfig = SmootherConfig()
     models: ModelConfig = ModelConfig()
     benchmarks: BenchmarksConfig = BenchmarksConfig()
 
