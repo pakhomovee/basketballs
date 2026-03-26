@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import collections
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from sklearn.cluster import KMeans
 
 from common.classes.player import PlayersDetections
+
+if TYPE_CHECKING:
+    from config import AppConfig
 
 
 def _normalize(vector: np.ndarray) -> np.ndarray:
@@ -70,8 +73,12 @@ class TeamClustering:
         # labels: dict[det_idx, team_label]
     """
 
-    def __init__(self, n_clusters: int = 2):
-        self.n_clusters = n_clusters
+    def __init__(self, cfg: "AppConfig | None" = None):
+        if cfg is None:
+            from config import load_default_config
+
+            cfg = load_default_config()
+        self.n_clusters = cfg.team_clustering.n_clusters
 
     def run(
         self,

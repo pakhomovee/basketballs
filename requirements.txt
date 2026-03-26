@@ -11,6 +11,7 @@ ultralytics>=8.0
 # Team clustering, tracking
 scikit-learn>=1.2
 scipy>=1.10
+trackeval
 
 # Visualization
 matplotlib>=3.7

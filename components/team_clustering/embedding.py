@@ -20,7 +20,7 @@ class PlayerEmbedder:
 
     def __init__(
         self,
-        model_path: str = str(DEFAULT_SEG_MODEL),
+        model_path: str | None = None,
         cfg: AppConfig | None = None,
         device: str | None = None,
     ):
@@ -28,6 +28,11 @@ class PlayerEmbedder:
             cfg = load_default_config()
         if device is None:
             device = get_device()
+
+        if model_path is None:
+            from common.utils.models import get_model_paths
+
+            model_path = str(get_model_paths(cfg).seg)
 
         embedding_cfg = cfg.team_clustering.embedding
         self.model = YOLO(model_path)

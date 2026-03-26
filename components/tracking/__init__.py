@@ -1,27 +1,28 @@
-"""
-Basketball player tracking.
+"""Basketball player tracking.
 
 Public API
 ----------
-- PlayerTracker : online Kalman + IoU + appearance tracker
-- FlowTracker   : offline min-cost-max-flow tracker (globally optimal)
-- Track, TrackState : track representation
-- load_detections_csv, get_measurements : data loading
-- evaluate_tracking, run_benchmark, match_objects : evaluation
-- bbox_iou : distance utility
+- FlowTracker        : offline min-cost-max-flow tracker
+- evaluate           : compute MOTA/HOTA/IDF1 for one sequence
+- run_benchmark      : benchmark runner over annotated dataset
+- load_yolo_mot      : load YOLO MOT annotation format
+- load_detections_csv, get_measurements : legacy CSV data loading
+- bbox_iou           : distance utility
 """
 
 from .data import get_measurements, load_detections_csv
 from common.distances import bbox_iou
-from .evaluation import evaluate_tracking, match_objects, run_benchmark
+from .evaluation import evaluate, load_yolo_mot, match_frame, remap_pred_ids
+from .benchmark import run_benchmark
 from .flow_tracker import FlowTracker
 
 __all__ = [
     "FlowTracker",
+    "evaluate",
+    "load_yolo_mot",
+    "match_frame",
+    "run_benchmark",
     "load_detections_csv",
     "get_measurements",
-    "evaluate_tracking",
-    "run_benchmark",
-    "match_objects",
     "bbox_iou",
 ]

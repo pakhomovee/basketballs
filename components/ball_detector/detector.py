@@ -144,7 +144,7 @@ class SimpleTracker:
 class WASBBallDetector:
     def __init__(
         self,
-        weights_path: str | Path = Path(__file__).parent.parent.parent / "models" / "wasb_basketball_best.pth.tar",
+        weights_path: str | Path | None = None,
         cfg: "AppConfig | None" = None,
         device: str | None = None,
         step: int = 3,
@@ -156,6 +156,11 @@ class WASBBallDetector:
             device = get_device()
         self.device = device
         self.step = step
+
+        if weights_path is None:
+            from common.utils.models import get_model_paths
+
+            weights_path = get_model_paths(cfg).wasb
 
         self.model = WASBHRNet()
         ckpt = torch.load(str(weights_path), map_location="cpu", weights_only=True)

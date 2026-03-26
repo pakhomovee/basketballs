@@ -1,298 +1,269 @@
 """
-Evaluation utilities: MOTA, IDF1, benchmark runner.
+Tracking evaluation metrics via TrackEval (HOTA, CLEAR/MOTA, Identity/IDF1).
+
+Thin adapter from our YOLO MOT format to TrackEval's sequence data dict.
+Works with YOLO MOT format (normalised bboxes) produced by the annotation tool.
+All matching is IoU-based in pixel space.
 """
 
 from __future__ import annotations
 
 import logging
-import os
+from pathlib import Path
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from .data import load_detections_csv
-from .flow_tracker import FlowTracker
+from common.distances import bbox_iou
 
 log = logging.getLogger(__name__)
 
 
-def _get_video_frame_width(video_path: str) -> float | None:
-    """Return video frame width in pixels, or None if unavailable."""
-    try:
-        import cv2
-
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            return None
-        width = float(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        cap.release()
-        return width if width > 0 else None
-    except Exception:
-        return None
+# ── Data loading ─────────────────────────────────────────────────────────────
 
 
-def _flow_tracker_results_to_tracks(det_list: list[tuple[int, object]]) -> list:
-    """Build track-like objects (frame_ids, history) from FlowTracker output for evaluation."""
-    from types import SimpleNamespace
-
-    track_data: dict[int, list[tuple[int, list[float]]]] = {}
-    for frame_id, player in det_list:
-        pid = player.player_id
-        if pid < 0:
-            continue
-        pos = player.court_position
-        if pos is None:
-            pos = (0.0, 0.0)
-        track_data.setdefault(pid, []).append((frame_id, list(pos)))
-
-    tracks = []
-    for track_id, points in sorted(track_data.items()):
-        points.sort(key=lambda x: x[0])
-        t = SimpleNamespace(
-            track_id=track_id,
-            frame_ids=[p[0] for p in points],
-            history=[p[1] for p in points],
-        )
-        tracks.append(t)
-    return tracks
-
-
-def match_objects(gt_list, tracked_list, distance_threshold=2.0):
+def load_yolo_mot(
+    txt_path: str | Path,
+    img_w: int,
+    img_h: int,
+) -> dict[int, list[dict]]:
     """
-    Bipartite match of GT <-> tracked objects by Euclidean field distance.
+    Load YOLO MOT txt into ``{frame_id: [{id, bbox}, ...]}``.
+
+    Format per line: ``frame_id track_id class_id cx cy w h``
+    with cx, cy, w, h in [0, 1].
+
+    Returns bbox as [x1, y1, x2, y2] in pixels.
+    """
+    result: dict[int, list[dict]] = {}
+    for line in Path(txt_path).read_text().strip().splitlines():
+        parts = line.split()
+        if len(parts) < 7:
+            continue
+        frame_id = int(parts[0])
+        track_id = int(parts[1])
+        if track_id < 0:
+            continue
+        cx, cy, w, h = float(parts[3]), float(parts[4]), float(parts[5]), float(parts[6])
+        x1 = (cx - w / 2) * img_w
+        y1 = (cy - h / 2) * img_h
+        x2 = (cx + w / 2) * img_w
+        y2 = (cy + h / 2) * img_h
+        result.setdefault(frame_id, []).append(
+            {
+                "id": track_id,
+                "bbox": [x1, y1, x2, y2],
+            }
+        )
+    return result
+
+
+# ── IoU matching ─────────────────────────────────────────────────────────────
+
+
+def match_frame(
+    gt_dets: list[dict],
+    pred_dets: list[dict],
+    iou_threshold: float = 0.5,
+) -> tuple[list[tuple[int, int]], list[int], list[int]]:
+    """
+    Bipartite IoU match of GT ↔ predicted detections on a single frame.
 
     Returns
     -------
-    matched_pairs : list of (gt_id, tracked_id)
-    unmatched_gt_ids : list
-    unmatched_tracked_ids : list
+    matches : list of (gt_id, pred_id)
+    unmatched_gt : list of gt_id
+    unmatched_pred : list of pred_id
     """
-    if not gt_list or not tracked_list:
-        return [], [g["id"] for g in gt_list], [t["id"] for t in tracked_list]
+    if not gt_dets or not pred_dets:
+        return (
+            [],
+            [g["id"] for g in gt_dets],
+            [p["id"] for p in pred_dets],
+        )
 
-    ng, nt = len(gt_list), len(tracked_list)
-    cost = np.full((ng, nt), 1e9)
-    for i, g in enumerate(gt_list):
-        gp = np.asarray(g["pos"])
-        for j, t in enumerate(tracked_list):
-            d = np.linalg.norm(gp - np.asarray(t["pos"]))
-            if d <= distance_threshold:
-                cost[i, j] = d
+    ng, np_ = len(gt_dets), len(pred_dets)
+    cost = np.ones((ng, np_), dtype=float)
+    for i, g in enumerate(gt_dets):
+        for j, p in enumerate(pred_dets):
+            iou = bbox_iou(g["bbox"], p["bbox"])
+            if iou >= iou_threshold:
+                cost[i, j] = 1.0 - iou
 
     rows, cols = linear_sum_assignment(cost)
-    matches, mg, mt = [], set(), set()
+    matches, mg, mp = [], set(), set()
     for r, c in zip(rows, cols):
-        if cost[r, c] < 1e9:
-            matches.append((gt_list[r]["id"], tracked_list[c]["id"]))
+        if cost[r, c] < 1.0:  # was actually above threshold
+            matches.append((gt_dets[r]["id"], pred_dets[c]["id"]))
             mg.add(r)
-            mt.add(c)
+            mp.add(c)
 
-    um_g = [gt_list[i]["id"] for i in range(ng) if i not in mg]
-    um_t = [tracked_list[j]["id"] for j in range(nt) if j not in mt]
-    return matches, um_g, um_t
+    um_g = [gt_dets[i]["id"] for i in range(ng) if i not in mg]
+    um_p = [pred_dets[j]["id"] for j in range(np_) if j not in mp]
+    return matches, um_g, um_p
 
 
-def evaluate_tracking(
-    tracker,
-    detections: list[dict],
-    distance_threshold: float = 2.0,
-):
+# ── TrackEval adapter ────────────────────────────────────────────────────────
+
+
+def _build_trackeval_data(
+    gt: dict[int, list[dict]],
+    pred: dict[int, list[dict]],
+) -> dict:
     """
-    Compute MOTA and IDF1 from tracker results vs detection ground truth.
+    Convert our ``{frame_id: [{id, bbox}]}`` dicts into TrackEval's sequence
+    data dict.
 
-    Parameters
-    ----------
-    tracker : object with .tracks attribute
-        Each track has .frame_ids and .history (list of positions).
-    detections : list[dict]
-        The same detection dicts that were fed to the tracker, used as GT.
-    distance_threshold : float
-        Maximum field distance for a match to count as correct.
-
-    Returns
-    -------
-    dict
-        ``{MOTA, IDF1, FP, FN, IDSW, TP, total_gt}``
+    TrackEval requires:
+    - 0-indexed contiguous integer IDs per sequence
+    - per-frame arrays of GT / tracker IDs
+    - per-frame IoU similarity matrices (shape: n_gt × n_pred)
     """
-    gt_by_frame: dict[int, list] = {}
-    for d in detections:
-        gt_by_frame.setdefault(d["frame_id"], []).append({"id": d["detection_id"], "pos": d["field_coords"]})
+    all_frames = sorted(set(gt) | set(pred))
 
-    tr_by_frame: dict[int, list] = {}
-    for t in tracker.tracks:
-        for fid, pos in zip(t.frame_ids, t.history):
-            tr_by_frame.setdefault(fid, []).append({"id": t.track_id, "pos": pos})
+    gt_id_set = sorted({d["id"] for dets in gt.values() for d in dets})
+    pred_id_set = sorted({d["id"] for dets in pred.values() for d in dets})
+    gt_id_map = {v: i for i, v in enumerate(gt_id_set)}
+    pred_id_map = {v: i for i, v in enumerate(pred_id_set)}
 
-    all_fids = sorted(set(gt_by_frame) | set(tr_by_frame))
+    gt_ids_list: list[np.ndarray] = []
+    tracker_ids_list: list[np.ndarray] = []
+    similarity_scores_list: list[np.ndarray] = []
+    num_gt_dets = 0
+    num_tracker_dets = 0
 
-    fp = fn = idsw = tp = total_gt = 0
-    prev_map: dict = {}
+    for fid in all_frames:
+        g_dets = gt.get(fid, [])
+        p_dets = pred.get(fid, [])
 
-    for fid in all_fids:
-        cg = gt_by_frame.get(fid, [])
-        ct = tr_by_frame.get(fid, [])
-        total_gt += len(cg)
+        gt_ids_t = np.array([gt_id_map[d["id"]] for d in g_dets], dtype=np.int64)
+        tracker_ids_t = np.array([pred_id_map[d["id"]] for d in p_dets], dtype=np.int64)
 
-        m, ug, ut = match_objects(cg, ct, distance_threshold)
-        fp += len(ut)
-        fn += len(ug)
-        tp += len(m)
+        sim = np.zeros((len(g_dets), len(p_dets)), dtype=np.float64)
+        for i, g in enumerate(g_dets):
+            for j, p in enumerate(p_dets):
+                sim[i, j] = bbox_iou(g["bbox"], p["bbox"])
 
-        cur_map = {}
-        for gid, tid in m:
-            if gid in prev_map and prev_map[gid] != tid:
-                idsw += 1
-            cur_map[gid] = tid
-        prev_map = cur_map
-
-    mota = 1.0 - (fp + fn + idsw) / total_gt if total_gt else 0.0
-    prec = tp / (tp + fp) if (tp + fp) else 0.0
-    rec = tp / (tp + fn) if (tp + fn) else 0.0
-    idf1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
+        gt_ids_list.append(gt_ids_t)
+        tracker_ids_list.append(tracker_ids_t)
+        similarity_scores_list.append(sim)
+        num_gt_dets += len(g_dets)
+        num_tracker_dets += len(p_dets)
 
     return {
-        "MOTA": mota,
-        "IDF1": idf1,
-        "FP": fp,
-        "FN": fn,
-        "IDSW": idsw,
-        "TP": tp,
-        "total_gt": total_gt,
+        "num_timesteps": len(all_frames),
+        "num_gt_ids": len(gt_id_set),
+        "num_tracker_ids": len(pred_id_set),
+        "num_gt_dets": num_gt_dets,
+        "num_tracker_dets": num_tracker_dets,
+        "gt_ids": gt_ids_list,
+        "tracker_ids": tracker_ids_list,
+        "similarity_scores": similarity_scores_list,
     }
 
 
-def _csv_to_player_detections(data: list[dict]):
-    """Convert benchmark CSV format to dict[frame_id, list[Player]] for FlowTracker."""
-    from common.classes.player import Player
-
-    detections: dict[int, list[Player]] = {}
-    for d in data:
-        fid = d["frame_id"]
-        p = Player(
-            bbox=d["bbox"],
-            court_position=tuple(d["field_coords"]) if d.get("field_coords") else None,
-        )
-        detections.setdefault(fid, []).append(p)
-    return detections
+# ── Optimal ID remapping ────────────────────────────────────────────────────
 
 
-def _extract_embeddings_for_segment(
-    video_path: str,
-    player_dets: dict[int, list],
-    seg_model: str = "yolov8n-seg.pt",
-    reid_weights: str | None = None,
-) -> None:
-    """Extract color + ReID embeddings from video for benchmark segment."""
-    from team_clustering.embedding import PlayerEmbedder
-
-    # Embedding extractors expect 0-based frame ids; CSV may be 1-based
-    min_fid = min(player_dets) if player_dets else 0
-    remapped = {fid - min_fid: players for fid, players in player_dets.items()}
-    PlayerEmbedder(model_path=seg_model).extract_player_embeddings(video_path, remapped)
-    # Copy embeddings back to original keys (same Player objects)
-    if reid_weights and os.path.isfile(reid_weights):
-        from common.utils.utils import get_device
-        from reidentification import extract_reid_embeddings
-
-        extract_reid_embeddings(video_path, remapped, reid_weights, device=get_device())
-
-
-def _find_segment_video(segment_path: str) -> str | None:
-    """Find video in entry folder. Tries video.mp4, video.avi, etc. or any .mp4/.avi file."""
-    for name in ("video", "clip"):
-        for ext in (".mp4", ".avi", ".mkv", ".mov"):
-            path = os.path.join(segment_path, name + ext)
-            if os.path.isfile(path):
-                return path
-    for f in os.listdir(segment_path):
-        if f.lower().endswith((".mp4", ".avi", ".mkv", ".mov")):
-            return os.path.join(segment_path, f)
-    return None
-
-
-def run_benchmark(
-    tracking_dir: str,
-    distance_threshold: float = 6.0,
-    max_time_since_update: int = 3,
-    eval_distance: float = 2.0,
-    reid_weights: str | None = None,
-    seg_model: str = "yolov8n-seg.pt",
-):
+def remap_pred_ids(
+    gt: dict[int, list[dict]],
+    pred: dict[int, list[dict]],
+    iou_threshold: float = 0.5,
+) -> dict[int, list[dict]]:
     """
-    Run the FlowTracker + evaluation loop over all entry folders in *tracking_dir*.
+    Remap pred track IDs to the optimal bijection onto GT track IDs.
 
-    Dataset format: tracking_dir/entry/[annotations.csv, homography, video]
-    Each entry folder contains annotations, homography, and video.
+    The tracker may output any permutation of IDs (e.g. tracker assigns
+    IDs 0-9 while GT uses IDs 1-10 in a different order).  Without remapping,
+    CLEAR-MOT IDSW would count a spurious switch on the very first matched
+    frame for every track whose ID number differs from GT.
 
-    Parameters
-    ----------
-    reid_weights : str, optional
-        Path to ReID model weights. Used when video is present.
-    seg_model : str
-        YOLO seg model for color embeddings.
-
-    Returns
-    -------
-    dict
-        Aggregated ``{MOTA, IDF1, FP, FN, IDSW, TP, total_gt}``
+    We find the globally optimal GT→pred ID bijection by maximising total
+    co-occurrence (frames where the same bbox is matched to both a GT track
+    and a pred track), then relabel pred so IDs align with GT.
+    Pred tracks with no GT match and extra GT tracks keep/get unique IDs.
     """
-    from types import SimpleNamespace
+    all_frames = sorted(set(gt) | set(pred))
 
-    agg = {"FP": 0, "FN": 0, "IDSW": 0, "TP": 0, "total_gt": 0}
+    # Collect co-occurrence counts between gt IDs and pred IDs
+    gt_ids: list[int] = sorted({d["id"] for dets in gt.values() for d in dets})
+    pred_ids: list[int] = sorted({d["id"] for dets in pred.values() for d in dets})
+    if not gt_ids or not pred_ids:
+        return pred
 
-    for folder_name in sorted(os.listdir(tracking_dir)):
-        segment_path = os.path.join(tracking_dir, folder_name)
-        if not os.path.isdir(segment_path):
-            continue
+    gt_idx = {v: i for i, v in enumerate(gt_ids)}
+    pred_idx = {v: i for i, v in enumerate(pred_ids)}
+    cooccur = np.zeros((len(gt_ids), len(pred_ids)), dtype=int)
 
-        csv_path = os.path.join(segment_path, "annotations.csv")
-        if not os.path.exists(csv_path):
-            log.warning("annotations.csv not found in %s — skipping", folder_name)
-            continue
+    for fid in all_frames:
+        g_dets = gt.get(fid, [])
+        p_dets = pred.get(fid, [])
+        matches, _, _ = match_frame(g_dets, p_dets, iou_threshold)
+        for gt_id, pred_id in matches:
+            if gt_id in gt_idx and pred_id in pred_idx:
+                cooccur[gt_idx[gt_id], pred_idx[pred_id]] += 1
 
-        log.info("Processing segment: %s", folder_name)
-        detections = load_detections_csv(csv_path)
+    # Hungarian on negative co-occurrence → maximise overlap
+    rows, cols = linear_sum_assignment(-cooccur)
+    remap: dict[int, int] = {}
+    for r, c in zip(rows, cols):
+        if cooccur[r, c] > 0:
+            remap[pred_ids[c]] = gt_ids[r]
 
-        player_dets = _csv_to_player_detections(detections)
-        video_path = _find_segment_video(segment_path)
-        frame_width = None
-        if video_path:
-            log.info("  Extracting embeddings from %s", video_path)
-            _extract_embeddings_for_segment(
-                video_path,
-                player_dets,
-                seg_model=seg_model,
-                reid_weights=reid_weights,
-            )
-            frame_width = _get_video_frame_width(video_path)
-        else:
-            log.warning("  No video in %s — FlowTracker uses spatial only (no embeddings)", segment_path)
-        tracker_obj = FlowTracker(frame_width=frame_width)
-        tracker_obj.track(player_dets)
-        det_list = [(fid, p) for fid in sorted(player_dets) for p in player_dets[fid]]
-        tracks = _flow_tracker_results_to_tracks(det_list)
-        tracker = SimpleNamespace(tracks=tracks)
+    # Pred IDs with no GT match get fresh IDs beyond max(all IDs)
+    next_id = max(max(gt_ids), max(pred_ids)) + 1
+    for pid in pred_ids:
+        if pid not in remap:
+            remap[pid] = next_id
+            next_id += 1
 
-        metrics = evaluate_tracking(tracker, detections, eval_distance)
-        for k in agg:
-            agg[k] += metrics[k]
+    # Apply remap
+    remapped: dict[int, list[dict]] = {}
+    for fid, dets in pred.items():
+        remapped[fid] = [{"id": remap.get(d["id"], d["id"]), "bbox": d["bbox"]} for d in dets]
+    return remapped
 
-        log.info(
-            "  %s  MOTA=%.3f  IDF1=%.3f  IDSW=%d",
-            folder_name,
-            metrics["MOTA"],
-            metrics["IDF1"],
-            metrics["IDSW"],
-        )
 
-    tgt = agg["total_gt"]
-    if tgt > 0:
-        agg["MOTA"] = 1.0 - (agg["FP"] + agg["FN"] + agg["IDSW"]) / tgt
-        prec = agg["TP"] / (agg["TP"] + agg["FP"]) if (agg["TP"] + agg["FP"]) else 0.0
-        rec = agg["TP"] / (agg["TP"] + agg["FN"]) if (agg["TP"] + agg["FN"]) else 0.0
-        agg["IDF1"] = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
-    else:
-        agg["MOTA"] = 0.0
-        agg["IDF1"] = 0.0
+# ── Evaluate ─────────────────────────────────────────────────────────────────
 
-    return agg
+
+def evaluate(
+    gt: dict[int, list[dict]],
+    pred: dict[int, list[dict]],
+    iou_threshold: float = 0.5,
+) -> dict[str, float | int]:
+    """
+    Compute all tracking metrics for one sequence using TrackEval.
+
+    Pred IDs are first remapped to the optimal bijection onto GT IDs so that
+    IDSW reflects true track fragmentation, not arbitrary ID numbering.
+
+    Returns dict with MOTA, MOTP, HOTA, DetA, AssA, IDF1, IDP, IDR,
+    TP, FP, FN, IDSW, total_gt, sum_iou.
+    """
+    from trackeval.metrics import CLEAR, HOTA, Identity
+
+    pred_remapped = remap_pred_ids(gt, pred, iou_threshold)
+    data = _build_trackeval_data(gt, pred_remapped)
+
+    threshold_cfg = {"THRESHOLD": iou_threshold, "PRINT_CONFIG": False}
+    hota_res = HOTA({"PRINT_CONFIG": False}).eval_sequence(data)
+    clear_res = CLEAR(threshold_cfg).eval_sequence(data)
+    id_res = Identity(threshold_cfg).eval_sequence(data)
+
+    return {
+        "MOTA": float(clear_res["MOTA"]),
+        "MOTP": float(clear_res["MOTP"]),
+        "TP": int(clear_res["CLR_TP"]),
+        "FP": int(clear_res["CLR_FP"]),
+        "FN": int(clear_res["CLR_FN"]),
+        "IDSW": int(clear_res["IDSW"]),
+        "total_gt": int(data["num_gt_dets"]),
+        "sum_iou": float(clear_res["MOTP_sum"]),
+        "IDF1": float(id_res["IDF1"]),
+        "IDP": float(id_res["IDP"]),
+        "IDR": float(id_res["IDR"]),
+        "HOTA": float(np.mean(hota_res["HOTA"])),
+        "DetA": float(np.mean(hota_res["DetA"])),
+        "AssA": float(np.mean(hota_res["AssA"])),
+    }

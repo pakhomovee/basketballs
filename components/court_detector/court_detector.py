@@ -41,7 +41,7 @@ def project_homography(points_xy, H):
 class CourtDetector:
     def __init__(
         self,
-        model_path: str | Path = Path(__file__).parent.parent.parent / "models" / "court_detection_model.pt",
+        model_path: str | Path | None = None,
         model_pretrained=None,
         cfg: "AppConfig | None" = None,
         device: Optional[str] = None,
@@ -51,8 +51,15 @@ class CourtDetector:
         self.cfg = cfg
         if device is None:
             device = get_device()
+        if model_path is None:
+            from common.utils.models import get_model_paths
+
+            model_path = get_model_paths(cfg).court_detection
         self.device = device
-        self.model = YOLO(model_path) if model_pretrained is None else YOLO(model_pretrained)
+        if model_pretrained is not None:
+            self.model = YOLO(model_pretrained)
+        else:
+            self.model = YOLO(model_path)
         self.model.to(self.device)
         self.model_path = model_path
         self.conf = self.cfg.court_detector.detection_threshold

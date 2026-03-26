@@ -152,7 +152,7 @@ def run_pipeline(
     tracker.track(players_detections)
 
     stage_logger.set_stage("Clustering teams…", 8)
-    team_clustering = TeamClustering()
+    team_clustering = TeamClustering(cfg=cfg)
     team_clustering.run(players_detections)
 
     stage_logger.set_stage("Possession & smoothing…", 9)
