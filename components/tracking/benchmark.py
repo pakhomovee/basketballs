@@ -249,6 +249,25 @@ def discover_sequences(data_dir: str | Path) -> list[tuple[str, str]]:
 
 # ── Per-sequence evaluation ──────────────────────────────────────────────────
 
+# A tracker factory takes frame_width (float) and returns an object with .track()
+_TRACKER_REGISTRY: dict[str, type] = {}
+
+
+def _get_tracker_registry() -> dict[str, type]:
+    """Lazily populated map of tracker name -> class."""
+    if not _TRACKER_REGISTRY:
+        from tracking.flow_tracker import FlowTracker
+        from tracking.appearance_tracker import SimpleAppearanceTracker
+        _TRACKER_REGISTRY["flow"] = FlowTracker
+        _TRACKER_REGISTRY["appearance"] = SimpleAppearanceTracker
+    return _TRACKER_REGISTRY
+
+
+def _build_tracker(tracker_cls: type, frame_width: float):
+    """Construct a tracker instance from its class, passing frame_width."""
+    return tracker_cls(frame_width=frame_width)
+
+
 def evaluate_sequence(
     video_path: str,
     annotation_path: str,
@@ -256,6 +275,7 @@ def evaluate_sequence(
     court_type: CourtType = CourtType.NBA,
     use_court: bool = True,
     visual_path: str | None = None,
+    tracker_cls: type | None = None,
 ) -> dict[str, float | int]:
     """
     Evaluate tracker performance on one sequence.
@@ -264,14 +284,24 @@ def evaluate_sequence(
     2. Build PlayersDetections from GT bboxes (IDs stripped).
     3. Optionally run court detection (provides homography for field-coord gating).
     4. Run embedding extraction on those boxes.
-    5. Run FlowTracker to assign track IDs.
+    5. Run the chosen tracker to assign track IDs (default: FlowTracker).
     6. Remap pred IDs to the optimal bijection onto GT IDs, then compute metrics.
     7. Optionally write a side-by-side GT vs pred visualization video.
+
+    Parameters
+    ----------
+    tracker_cls :
+        Tracker class to instantiate (must accept ``frame_width`` kwarg and
+        expose a ``.track(detections)`` method).  Defaults to
+        ``FlowTracker``.
     """
-    from team_clustering.embedding import DEFAULT_SEG_MODEL, extract_player_embeddings
-    from tracking.flow_tracker import FlowTracker
+    from team_clustering.embedding import PlayerEmbedder
     import os
     from common.utils.utils import get_device
+
+    if tracker_cls is None:
+        from tracking.flow_tracker import FlowTracker
+        tracker_cls = FlowTracker
 
     REID_MODEL_PATH = (
         Path(__file__).resolve().parent.parent.parent / "models" / "reid_model.pth"
@@ -289,20 +319,20 @@ def evaluate_sequence(
         from court_detector.court_detector import CourtDetector
         log.info("Running court detection on GT boxes...")
         court_detector = CourtDetector()
-        court_detector.run(video_path, detections, court_type)
+        court_detector.run(video_path, detections)
     else:
         log.info("Court detection disabled — tracker uses pixel-space costs only")
 
     log.info("Extracting embeddings...")
-    extract_player_embeddings(video_path, detections)
+    PlayerEmbedder().extract_player_embeddings(video_path, detections)
     if os.path.isfile(str(REID_MODEL_PATH)):
         from reidentification import extract_reid_embeddings
         extract_reid_embeddings(
             video_path, detections, str(REID_MODEL_PATH), device=get_device(),
         )
 
-    log.info("Running FlowTracker...")
-    tracker = FlowTracker(num_tracks=10, frame_width=float(img_w))
+    log.info("Running %s...", tracker_cls.__name__)
+    tracker = _build_tracker(tracker_cls, float(img_w))
     tracker.track(detections)
 
     pred = _detections_to_pred(detections)
@@ -323,6 +353,7 @@ def run_benchmark(
     court_type: CourtType = CourtType.NBA,
     use_court: bool = True,
     write_visuals: bool = True,
+    tracker_cls: type | None = None,
 ) -> dict[str, float | int]:
     """
     Run tracker + evaluation on all sequences in *data_dir*.
@@ -330,6 +361,12 @@ def run_benchmark(
     Returns per-sequence and aggregated metrics.
     Writes side-by-side GT vs pred videos to ``<data_dir>/visuals/`` unless
     *write_visuals* is False.
+
+    Parameters
+    ----------
+    tracker_cls :
+        Tracker class to use.  Defaults to ``FlowTracker``.
+        Pass ``SimpleAppearanceTracker`` for a fast greedy baseline.
     """
     pairs = discover_sequences(data_dir)
     if not pairs:
@@ -358,6 +395,7 @@ def run_benchmark(
             court_type=court_type,
             use_court=use_court,
             visual_path=visual_path,
+            tracker_cls=tracker_cls,
         )
         all_results.append((name, metrics))
 
@@ -437,15 +475,21 @@ def main():
         "--no-visual", action="store_true",
         help="Skip writing side-by-side GT vs pred visualization videos",
     )
+    parser.add_argument(
+        "--tracker", choices=["flow", "appearance"], default="flow",
+        help="Tracker to benchmark: 'flow' (FlowTracker, default) or 'appearance' (SimpleAppearanceTracker)",
+    )
     args = parser.parse_args()
 
     court_type = CourtType.NBA if args.court_type == "nba" else CourtType.FIBA
+    tracker_cls = _get_tracker_registry()[args.tracker]
     run_benchmark(
         args.data_dir,
         iou_threshold=args.iou_threshold,
         court_type=court_type,
         use_court=not args.no_court,
         write_visuals=not args.no_visual,
+        tracker_cls=tracker_cls,
     )
 
 

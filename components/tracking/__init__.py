@@ -15,9 +15,11 @@ from common.distances import bbox_iou
 from .evaluation import evaluate, load_yolo_mot, match_frame, remap_pred_ids
 from .benchmark import run_benchmark
 from .flow_tracker import FlowTracker
+from .appearance_tracker import SimpleAppearanceTracker
 
 __all__ = [
     "FlowTracker",
+    "SimpleAppearanceTracker",
     "evaluate",
     "load_yolo_mot",
     "match_frame",

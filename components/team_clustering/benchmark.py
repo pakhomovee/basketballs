@@ -41,7 +41,7 @@ def run_team_clustering_benchmark(
     from team_clustering.embedding import PlayerEmbedder
 
     entries = _load_entries(ground_truth_path, limit=limit)
-    embedder = PlayerEmbedder(str(resolve_repo_path(seg_model)), get_device())
+    embedder = PlayerEmbedder(str(resolve_repo_path(seg_model)), device=get_device())
     results = {
         "accuracy": 0.0,
         "correct": 0,

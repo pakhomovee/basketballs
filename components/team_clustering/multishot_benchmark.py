@@ -136,7 +136,7 @@ def run_multishot_team_clustering_benchmark(
     if limit is not None:
         sample_ids = sample_ids[:limit]
 
-    embedder = PlayerEmbedder(str(resolve_repo_path(seg_model)), get_device())
+    embedder = PlayerEmbedder(str(resolve_repo_path(seg_model)), device=get_device())
     single_frame_metrics: list[dict[str, int | float | str]] = []
     results = {
         "accuracy": 0.0,
