@@ -164,7 +164,7 @@ def get_frame_pose_detections(
 
 
 def get_frame_ball_detections(
-    frame_detections: FrameDetections, conf_threshold=0.2, nms_iou_threshold: float = 0.9
+    frame_detections: FrameDetections, conf_threshold=0.1, nms_iou_threshold: float = 0.9
 ) -> list[Ball]:
     ball_detections = [d for d in frame_detections.detections if d.class_id == 0 and d.confidence >= conf_threshold]
     ball_detections = _nms_detections(ball_detections, iou_threshold=nms_iou_threshold)

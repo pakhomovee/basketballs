@@ -17,12 +17,12 @@ import cv2
 import numpy as np
 from tqdm.auto import tqdm
 from detector.remove_bad_ball_detections import remove_bad_ball_detections
-from detector.interpolate_ball_detections import linear_interpolate_ball_detections
 from common.distances import bbox_iou
 
 from court_detector.court_detector import CourtDetector
 from court_detector.court_constants import CourtConstants
 from common.classes import CourtType
+from ball_detector.detector import WASBBallDetector
 
 
 def _draw_skeleton(
@@ -135,7 +135,7 @@ def video_with_ball_bbox_yolo(
         frame_size=(w, h),
         homographies=homographies,
     )
-    interpolated_ball_by_frame = linear_interpolate_ball_detections(kept_ball_by_frame)
+    interpolated_ball_by_frame = kept_ball_by_frame
 
     max_player_detections = 0
     max_ball_detections = 0

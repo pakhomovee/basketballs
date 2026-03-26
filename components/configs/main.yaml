@@ -18,7 +18,7 @@ court_detector:
   smoothing_lr: 0.001
 
 ball_detector:
-  score_threshold: 0.3
+  score_threshold: 0.35
   max_disp_ratio: 0.3333333333
 
 detector:
