@@ -91,7 +91,7 @@ def main() -> None:
         "ground_truth",
         nargs="?",
         default=None,
-        help="Path to JSON file with image_path, bboxes, and team_labels. Defaults to the path configured in main.yaml.",
+        help="Path to JSON file with image_path, bboxes, and team_labels. Defaults to main.yaml.",
     )
     parser.add_argument("--seg-model", default=str(DEFAULT_SEG_MODEL), help="YOLO segmentation checkpoint")
     parser.add_argument("--limit", type=int, default=None, help="Only evaluate the first N entries")

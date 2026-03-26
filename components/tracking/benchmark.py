@@ -190,10 +190,9 @@ def write_tracking_visual(
         pred_dets = pred.get(frame_id, [])
 
         # Per-frame IoU matching to determine which GT each pred box corresponds to
-        matches, um_gt_ids, um_pred_ids = _match_frame(gt_dets, pred_dets, iou_threshold)
+        matches, um_gt_ids, _ = _match_frame(gt_dets, pred_dets, iou_threshold)
         pred_to_gt: dict[int, int] = {pred_id: gt_id for gt_id, pred_id in matches}
         um_gt_set: set[int] = set(um_gt_ids)
-        um_pred_set: set[int] = set(um_pred_ids)
 
         sx = panel_w / src_w
         sy = panel_h / src_h
@@ -296,7 +295,9 @@ def evaluate_sequence(
         from court_detector.court_detector import CourtDetector
 
         log.info("Running court detection on GT boxes...")
-        court_detector = CourtDetector()
+        _cfg = load_default_config()
+        _cfg.main.court_type = court_type
+        court_detector = CourtDetector(cfg=_cfg)
         court_detector.run(video_path, detections)
     else:
         log.info("Court detection disabled — tracker uses pixel-space costs only")
@@ -421,7 +422,8 @@ def _print_metrics(name: str, m: dict) -> None:
     print(f"  HOTA:  {m.get('HOTA', 0):.4f}    DetA: {m.get('DetA', 0):.4f}    AssA: {m.get('AssA', 0):.4f}")
     print(f"  IDF1:  {m.get('IDF1', 0):.4f}    IDP:  {m.get('IDP', 0):.4f}    IDR:  {m.get('IDR', 0):.4f}")
     print(
-        f"  TP: {m.get('TP', 0)}  FP: {m.get('FP', 0)}  FN: {m.get('FN', 0)}  IDSW: {m.get('IDSW', 0)}  GT: {m.get('total_gt', 0)}"
+        f"  TP: {m.get('TP', 0)}  FP: {m.get('FP', 0)}  FN: {m.get('FN', 0)} "
+        f" IDSW: {m.get('IDSW', 0)}  GT: {m.get('total_gt', 0)}"
     )
     print(f"{'═' * 50}")
 
