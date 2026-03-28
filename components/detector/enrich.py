@@ -102,7 +102,7 @@ def match_poses_to_players(
 
 
 def enrich_detections_with_numbers(
-    video_path: str,
+    video: cv2.VideoCapture,
     video_detections: VideoDetections,
     *,
     player_conf_threshold: float = 0.1,
@@ -119,34 +119,31 @@ def enrich_detections_with_numbers(
     players_detections = get_video_players_detections(video_detections, conf_threshold=player_conf_threshold)
     referees_detections = get_video_referee_detections(video_detections, conf_threshold=referee_conf_threshold)
     number_detections: NumberDetections = {}
-    cap = cv2.VideoCapture(video_path)
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    try:
-        idx = 0
-        for i in tqdm(range(frame_count), desc="Enrich numbers"):
-            ret, frame = cap.read()
-            if not ret:
-                break
-            if idx == len(video_detections):
-                break
-            if video_detections[idx].frame_id != i:
-                continue
+    video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+    idx = 0
+    for i in tqdm(range(frame_count), desc="Enrich numbers"):
+        ret, frame = video.read()
+        if not ret:
+            break
+        if idx == len(video_detections):
+            break
+        if video_detections[idx].frame_id != i:
+            continue
 
-            number_detections[i] = get_frame_number_detections(
-                video_detections[idx],
-                frame=frame,
-                conf_threshold=number_conf_threshold,
-                ocr_conf_threshold=ocr_conf_threshold,
-            )
-            idx += 1
-    finally:
-        cap.release()
+        number_detections[i] = get_frame_number_detections(
+            video_detections[idx],
+            frame=frame,
+            conf_threshold=number_conf_threshold,
+            ocr_conf_threshold=ocr_conf_threshold,
+        )
+        idx += 1
     match_numbers_to_players(players_detections, number_detections, referees_detections)
     return players_detections, referees_detections, number_detections
 
 
 def enrich_players_with_pose(
-    video_path: str,
+    video: cv2.VideoCapture,
     players_detections: PlayersDetections,
     *,
     pose_model_path: str | Path | None = None,
@@ -157,22 +154,17 @@ def enrich_players_with_pose(
     Read video frames and enrich provided players_detections with pose skeletons.
     Mutates Player objects in-place and also returns players_detections.
     """
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {video_path}")
-    try:
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        for frame_id in tqdm(range(frame_count), desc="Pose enrich", unit="frame"):
-            ret, frame = cap.read()
-            if not ret:
-                break
-            players_in_frame = players_detections.get(frame_id, [])
-            if not players_in_frame:
-                continue
-            poses = get_frame_pose_detections(frame, model_path=pose_model_path, conf_threshold=pose_conf_threshold)
-            match_poses_to_players(players_in_frame, poses, iou_threshold=match_iou_threshold)
-    finally:
-        cap.release()
+    video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+    for frame_id in tqdm(range(frame_count), desc="Pose enrich", unit="frame"):
+        ret, frame = video.read()
+        if not ret:
+            break
+        players_in_frame = players_detections.get(frame_id, [])
+        if not players_in_frame:
+            continue
+        poses = get_frame_pose_detections(frame, model_path=pose_model_path, conf_threshold=pose_conf_threshold)
+        match_poses_to_players(players_in_frame, poses, iou_threshold=match_iou_threshold)
     return players_detections
 
 

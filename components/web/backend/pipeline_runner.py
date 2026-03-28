@@ -61,11 +61,10 @@ def _run_pipeline(job_id: str, video_path: str) -> None:
 
     cfg = load_default_config()
 
-    total_stages = PIPELINE_TOTAL_STAGES + 1  # pipeline + export
+    total_stages = PIPELINE_TOTAL_STAGES + 1
     stage_logger = _JobStageLogger(job_id, total_stages=total_stages)
     result = run_pipeline(video_path, cfg, stage_logger=stage_logger)
 
-    # Export is an extra step on top of the shared pipeline.
     stage_logger.set_stage("Exporting annotations…", PIPELINE_TOTAL_STAGES)
     annotation_data = export_annotations(
         result.players_detections,

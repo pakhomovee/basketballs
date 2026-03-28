@@ -8,6 +8,8 @@ Center of court = (0, 0), right = +x.
 from pathlib import Path
 from typing import Tuple, Union
 
+from video_reader import VideoReader
+
 import cv2
 import numpy as np
 from tqdm.auto import tqdm
@@ -124,10 +126,10 @@ def write_2d_court_video(
     court_view = Court2DView(league)
     h, w = court_view._base_court.shape[:2]
 
-    cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    cap.release()
+    vr = VideoReader(video_path)
+    fps = vr.get(cv2.CAP_PROP_FPS) or 25.0
+    total_frames = int(vr.get(cv2.CAP_PROP_FRAME_COUNT))
+    vr.release()
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))

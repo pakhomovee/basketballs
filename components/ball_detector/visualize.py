@@ -15,19 +15,22 @@ from tqdm import tqdm
 
 from ball_detector.detector import WASBBallDetector
 from config import load_app_config
+from video_reader import VideoReader
 
 
 def visualize(input_path: str, output_path: str, step: int = 3):
     cfg = load_app_config(Path(__file__).resolve().parent.parent / "configs" / "main.yaml")
     detector = WASBBallDetector(cfg=cfg, step=step)
+    vr = VideoReader(input_path)
     print(f"Running WASB ball detection (step={step}) on {input_path} …")
-    results = detector.detect_video(input_path)
+    results = detector.detect_video(vr)
 
-    cap = cv2.VideoCapture(input_path)
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = vr.get(cv2.CAP_PROP_FPS) or 25.0
+    w = int(vr.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(vr.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total = int(vr.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    vr.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
@@ -36,7 +39,7 @@ def visualize(input_path: str, output_path: str, step: int = 3):
     detected_count = 0
 
     for i in tqdm(range(total), desc="Drawing"):
-        ret, frame = cap.read()
+        ret, frame = vr.read()
         if not ret:
             break
 
@@ -59,7 +62,7 @@ def visualize(input_path: str, output_path: str, step: int = 3):
 
         writer.write(frame)
 
-    cap.release()
+    vr.release()
     writer.release()
     print(f"Done. Ball detected on {detected_count}/{total} frames. Saved to {output_path}")
 

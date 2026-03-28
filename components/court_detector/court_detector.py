@@ -207,7 +207,7 @@ class CourtDetector:
 
     def extract_homographies_from_video_v2(
         self,
-        video_path: str,
+        video: cv2.VideoCapture,
         court_constants: CourtConstants,
         smoothness_cost: float = 200.0,
         keypoint_eps: float = 0.003,
@@ -226,10 +226,8 @@ class CourtDetector:
         3) Greedy D&C: at each level, take children answers, then try a single
            level-wide RANSAC; keep whichever gives a better objective.
         """
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            raise RuntimeError(f"Cannot open video: {video_path}")
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
 
         frames_sizes: list[tuple[int, int]] = []
         keypoints_detections: list[tuple[np.ndarray, np.ndarray]] = []
@@ -247,7 +245,7 @@ class CourtDetector:
         print("Reading frames, detecting keypoints and computing optical flow...")
         with tqdm(total=total_frames if total_frames > 0 else None, unit="frame") as pbar:
             while True:
-                ret, frame_bgr = cap.read()
+                ret, frame_bgr = video.read()
                 if not ret:
                     break
                 h, w, _ = frame_bgr.shape
@@ -285,8 +283,6 @@ class CourtDetector:
                 prev_size = (w, h)
                 frame_idx += 1
                 pbar.update(1)
-
-        cap.release()
 
         n = len(frames_sizes)
         if n == 0:
@@ -686,7 +682,7 @@ class CourtDetector:
 
     def run(
         self,
-        video_path: str,
+        video: cv2.VideoCapture,
         detections: PlayersDetections,
     ) -> list[Optional[np.ndarray]]:
         """
@@ -695,7 +691,7 @@ class CourtDetector:
         Returns homographies.
         """
 
-        print(f"Running court detector on {video_path}...")
+        print("Running court detector...")
 
         court_type_cfg = self.cfg.main.court_type
         if isinstance(court_type_cfg, CourtType):
@@ -713,7 +709,7 @@ class CourtDetector:
 
         court_constants = CourtConstants(court_type)
         homographies, frames_sizes, keypoint_detections, losses = self.extract_homographies_from_video_v2(
-            video_path,
+            video,
             court_constants,
             smoothness_cost=self.cfg.court_detector.smoothness_cost,
             keypoint_eps=self.cfg.court_detector.keypoint_eps,

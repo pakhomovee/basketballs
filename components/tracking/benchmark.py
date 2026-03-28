@@ -39,6 +39,7 @@ from common.utils.datasets import ensure_dataset
 from common.utils.models import ensure_models
 from config import load_default_config
 from tracking.evaluation import evaluate, load_yolo_mot, remap_pred_ids
+from video_reader import VideoReader
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger(__name__)
@@ -291,19 +292,20 @@ def evaluate_sequence(
     # Build detections from GT bboxes (tracker gets the correct boxes, not IDs)
     detections = _gt_to_player_detections(gt)
 
-    if use_court:
-        from court_detector.court_detector import CourtDetector
+    with VideoReader(video_path) as vr:
+        if use_court:
+            from court_detector.court_detector import CourtDetector
 
-        log.info("Running court detection on GT boxes...")
-        _cfg = load_default_config()
-        _cfg.main.court_type = court_type
-        court_detector = CourtDetector(cfg=_cfg)
-        court_detector.run(video_path, detections)
-    else:
-        log.info("Court detection disabled — tracker uses pixel-space costs only")
+            log.info("Running court detection on GT boxes...")
+            _cfg = load_default_config()
+            _cfg.main.court_type = court_type
+            court_detector = CourtDetector(cfg=_cfg)
+            court_detector.run(vr, detections)
+        else:
+            log.info("Court detection disabled — tracker uses pixel-space costs only")
 
-    log.info("Extracting embeddings...")
-    PlayerEmbedder().extract_player_embeddings(video_path, detections)
+        log.info("Extracting embeddings...")
+        PlayerEmbedder().extract_player_embeddings(vr, detections)
 
     log.info("Running FlowTracker...")
     tracker = FlowTracker(frame_width=float(img_w))

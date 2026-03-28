@@ -6,9 +6,10 @@ main:
   output_2d_path: null
 
   court_type: "nba" # "nba" | "fiba"
-  with_pose: false
+  with_pose: true
   enable_smoothing: true
   no_reid: false
+  target_fps: 30
 
 court_detector:
   detection_threshold: 0.25

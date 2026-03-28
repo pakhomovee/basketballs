@@ -20,6 +20,7 @@ from court_detector.court_constants import (
 from court_detector.court_detector import CourtDetector, project_homography
 from court_detector.prepare_dataset import SPORCENTER_GOOD_SEQS
 from config import load_default_config
+from video_reader import VideoReader
 import json
 import matplotlib.pyplot as plt
 
@@ -461,15 +462,14 @@ def run_video(args):
     #     str(args.video), court_constants
     # )
 
+    vr = VideoReader(str(args.video))
     homographies, frames_sizes, keypoints_detections, losses = detector.extract_homographies_from_video_v2(
-        str(args.video), court_constants
+        vr, court_constants
     )
     # losses = None
 
-    # Open video again for visualization
-    cap = cv2.VideoCapture(str(args.video))
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {args.video}")
+    # Rewind for visualization
+    vr.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     # Load court model image (NBA court)
     court_img_path = Path(__file__).parent / "nba.png"
@@ -499,8 +499,8 @@ def run_video(args):
             frame_idx = len(homographies) - 1
 
         # Seek to the desired frame and read it
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, frame_bgr = cap.read()
+        vr.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame_bgr = vr.read()
         if not ret:
             break
 
@@ -577,7 +577,7 @@ def run_video(args):
             # Any other key: stay on the same frame
             continue
 
-    cap.release()
+    vr.release()
     cv2.destroyWindow(window_name)
 
 

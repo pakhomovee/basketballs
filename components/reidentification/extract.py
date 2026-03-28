@@ -31,7 +31,7 @@ class ReIDFeatureExtractor:
 
 
 def extract_reid_embeddings(
-    video_path: str,
+    video: cv2.VideoCapture,
     detections: dict,
     weights_path: str,
     device: str = "cuda",
@@ -41,16 +41,13 @@ def extract_reid_embeddings(
     from tqdm.auto import tqdm
 
     extractor = ReIDFeatureExtractor(weights_path, device)
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {video_path}")
-
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
     batch_crops: list[np.ndarray] = []
     batch_players: list = []
 
     for frame_id in tqdm(range(total_frames), desc="Extracting ReID embeddings"):
-        ret, frame = cap.read()
+        ret, frame = video.read()
         if not ret:
             break
 
@@ -79,5 +76,3 @@ def extract_reid_embeddings(
         features = extractor.extract_batch(batch_crops)
         for player, feature in zip(batch_players, features):
             player.reid_embedding = feature
-
-    cap.release()

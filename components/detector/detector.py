@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from common.classes.detections import FrameDetections, Detection, VideoDetections
 from common.classes.ball import BallDetections, Ball
 from common.distances import bbox_iou, bbox_overlap_ratio
@@ -36,8 +38,8 @@ class Detector:
             detections.append(Detection(x1, y1, x2, y2, class_id, float(box.conf.item())))
         return detections
 
-    def detect_video(self, video_path: str) -> VideoDetections:
-        video = cv2.VideoCapture(video_path)
+    def detect_video(self, video: cv2.VideoCapture) -> VideoDetections:
+        video.set(cv2.CAP_PROP_POS_FRAMES, 0)
         frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
         frame_detections = []
         for i in tqdm(range(frame_count), desc="Detector"):
