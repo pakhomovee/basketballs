@@ -50,15 +50,15 @@
 				onclick={() => onSeek(evt.timestamp_sec)}
 				class="w-full text-left rounded-lg px-3 py-2 transition-all group
 					{isActive
-						? 'bg-[var(--color-ball)]/10 border border-[var(--color-ball)]/30'
-						: 'hover:bg-[var(--color-surface-hover)] border border-transparent'}"
+					? 'bg-[var(--color-ball)]/10 border border-[var(--color-ball)]/30'
+					: 'hover:bg-[var(--color-surface-hover)] border border-transparent'}"
 			>
 				<div class="flex items-center gap-2">
 					<span
 						class="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded transition-colors
 							{isActive
-								? 'bg-[var(--color-ball)]/20 text-[var(--color-ball)]'
-								: 'bg-[var(--color-accent)]/20 text-[var(--color-accent)] group-hover:bg-[var(--color-accent)]/30'}"
+							? 'bg-[var(--color-ball)]/20 text-[var(--color-ball)]'
+							: 'bg-[var(--color-accent)]/20 text-[var(--color-accent)] group-hover:bg-[var(--color-accent)]/30'}"
 					>
 						{formatTime(evt.timestamp_sec)}
 					</span>
@@ -68,7 +68,10 @@
 							class="inline-flex items-center gap-1 font-medium"
 							style:color={teamColor(evt.team_id)}
 						>
-							<span class="w-1.5 h-1.5 rounded-full inline-block" style:background={teamColor(evt.team_id)}></span>
+							<span
+								class="w-1.5 h-1.5 rounded-full inline-block"
+								style:background={teamColor(evt.team_id)}
+							></span>
 							#{evt.from_player_id}
 						</span>
 						<span class="text-[var(--color-text-muted)]">→</span>

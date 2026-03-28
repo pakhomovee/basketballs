@@ -25,12 +25,13 @@
 	}
 </script>
 
-<div class="flex items-center gap-3 px-4 py-2.5 rounded-xl border
+<div
+	class="flex items-center gap-3 px-4 py-2.5 rounded-xl border
 	{owner
 		? 'border-[var(--color-ball)]/40 bg-[var(--color-ball)]/5'
 		: 'border-[var(--color-border)] bg-[var(--color-surface)]'}
-	transition-all duration-200">
-
+	transition-all duration-200"
+>
 	<div class="flex items-center gap-2 shrink-0">
 		<span class="text-sm">🏀</span>
 		<span class="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">

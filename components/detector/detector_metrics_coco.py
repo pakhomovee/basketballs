@@ -7,12 +7,12 @@ Detection metrics using built-in library evaluation:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import cv2
 import numpy as np
 from tqdm import tqdm
+from ultralytics import YOLO
 
 # ---------------------------------------------------------------------------
 # COCO format  →  RF-DETR + pycocotools
@@ -117,7 +117,6 @@ def print_coco_metrics(coco_eval: COCOeval, coco_gt: COCO) -> None:
     cat_ids = coco_eval.params.catIds
     cat_names = {c["id"]: c["name"] for c in coco_gt.loadCats(cat_ids)}
 
-    recall_arr = coco_eval.eval.get("recall")
     recall_thresholds = np.linspace(0, 1, 101)
 
     # precision shape: [T, R, K, A, M]
@@ -167,8 +166,6 @@ def print_coco_metrics(coco_eval: COCOeval, coco_gt: COCO) -> None:
 # ---------------------------------------------------------------------------
 # YOLO format  →  ultralytics model.val()
 # ---------------------------------------------------------------------------
-
-from ultralytics import YOLO
 
 
 def evaluate_yolo(

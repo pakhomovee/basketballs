@@ -281,7 +281,6 @@ def visualize_players_detections(
 
     writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
     color_player = (255, 165, 0)  # BGR
-    color_rim = (0, 0, 255)  # BGR red
     thickness = 2
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.5
