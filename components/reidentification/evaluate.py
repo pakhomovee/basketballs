@@ -65,10 +65,8 @@ def _compute_metrics(
     for index in range(distance_matrix.shape[0]):
         order = torch.argsort(distance_matrix[index])
         ranked_pids = gallery_pids[order]
-        ranked_camids = gallery_camids[order]
 
-        keep = ~((ranked_pids == query_pids[index]) & (ranked_camids == query_camids[index]))
-        matches = ranked_pids[keep] == query_pids[index]
+        matches = ranked_pids == query_pids[index]
         if not matches.any():
             continue
 

@@ -114,7 +114,7 @@ class ModelConfig(BaseModel):
     parseq_url: str = "https://disk.yandex.ru/d/QucoCUmnUbLMHw"
 
     reid_filename: str = "reid_model.pth"
-    reid_url: str = "https://disk.yandex.ru/d/Ak2skkMBdVCqmQ"
+    reid_url: str = "https://disk.yandex.ru/d/ss6GcWNW5Y5BiA"
 
     seg_filename: str = "seg-model.pt"
     seg_url: str = "https://disk.yandex.ru/d/dpjzmKkadg-nZg"

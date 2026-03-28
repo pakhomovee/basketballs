@@ -23,22 +23,13 @@ class BNNeck(nn.Module):
 
 
 class ReIDModel(nn.Module):
-    """ResNet-50 backbone → 2048-d global feature → BNNeck → classifier.
+    """ResNet-50 backbone → 2048-d global feature → BNNeck."""
 
-    During training returns (global_feat, logits) for joint triplet + CE loss.
-    The triplet loss uses global features, while the classifier consumes BNNeck
-    features internally to produce logits.
-    During inference returns L2-normalised features for distance computation.
-    """
-
-    def __init__(self, num_classes: int, feature_dim: int = 2048, pretrained: bool = True):
+    def __init__(self, feature_dim: int = 2048, pretrained: bool = True):
         super().__init__()
         self.backbone = self._build_backbone(pretrained=pretrained)
         self.gap = nn.AdaptiveAvgPool2d(1)
-
         self.bnneck = BNNeck(feature_dim)
-        self.classifier = nn.Linear(feature_dim, num_classes, bias=False)
-        nn.init.normal_(self.classifier.weight, std=0.001)
 
     @staticmethod
     def _build_backbone(*, pretrained: bool) -> nn.Module:
@@ -53,10 +44,10 @@ class ReIDModel(nn.Module):
     def forward(self, x: torch.Tensor):
         global_feat = self._global_features(x)
         bn_feat = self.bnneck(global_feat)
+        normed = F.normalize(bn_feat, p=2, dim=1)
         if self.training:
-            logits = self.classifier(bn_feat)
-            return global_feat, logits
-        return F.normalize(bn_feat, p=2, dim=1)
+            return global_feat, normed
+        return normed
 
     @torch.no_grad()
     def extract_features(self, x: torch.Tensor) -> torch.Tensor:

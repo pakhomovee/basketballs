@@ -18,7 +18,7 @@ court_detector:
   smoothing_lr: 0.001
 
 ball_detector:
-  score_threshold: 0.35
+  score_threshold: 0.5
   max_disp_ratio: 0.3333333333
 
 detector:
@@ -82,7 +82,7 @@ models:
   parseq_filename: "parseq_flex.ckpt"
   parseq_url: "https://disk.yandex.ru/d/QucoCUmnUbLMHw"
   reid_filename: "reid_model.pth"
-  reid_url: "https://disk.yandex.ru/d/Ak2skkMBdVCqmQ"
+  reid_url: "https://disk.yandex.ru/d/ss6GcWNW5Y5BiA"
   seg_filename: "seg-model.pt"
   seg_url: "https://disk.yandex.ru/d/dpjzmKkadg-nZg"
   wasb_filename: "wasb_basketball_best.pth.tar"
