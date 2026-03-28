@@ -54,3 +54,8 @@ components/web/storage/
 
 # Development helper scripts (not needed in repo – run locally)
 roadmap.md
+
+# Shot detector
+components/shot_detector/dataset_features/
+components/shot_detector/trained_model/
+components/shot_detector/dataset/data/

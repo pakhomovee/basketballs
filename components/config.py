@@ -123,6 +123,9 @@ class ModelConfig(BaseModel):
     wasb_filename: str = "wasb_basketball_best.pth.tar"
     wasb_url: str = "https://disk.yandex.ru/d/JZQN5HEOKOegog"
 
+    shot_detection_filename: str = "shot_detection_model.pt"
+    shot_detection_url: str = "https://disk.yandex.ru/d/0_D7TINKaNpM7A"
+
 
 class BenchmarkDataset(BaseModel):
     """Download URL and local path for a benchmark dataset."""
