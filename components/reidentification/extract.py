@@ -16,9 +16,8 @@ class ReIDFeatureExtractor:
     def __init__(self, weights_path: str, device: str = "cuda"):
         self.device = device
         state = torch.load(weights_path, map_location=device, weights_only=True)
-        num_classes = state["classifier.weight"].shape[0]
-        self.model = ReIDModel(num_classes=num_classes, pretrained=False)
-        self.model.load_state_dict(state)
+        self.model = ReIDModel(pretrained=False)
+        self.model.load_state_dict(state, strict=False)
         self.model.to(device)
         self.model.eval()
 

@@ -15,14 +15,13 @@ from torchvision import transforms
 
 _FILENAME_RE = re.compile(r"^(\d+)_(\d+)_(\d+)\.jpeg$")
 
-# Standard ReID input size (height, width) — people are taller than wide
 INPUT_SIZE = (256, 128)
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
-IMAGENET_MEAN_ARRAY = np.array(IMAGENET_MEAN, dtype=np.float32)
-IMAGENET_STD_ARRAY = np.array(IMAGENET_STD, dtype=np.float32)
+_IMAGENET_MEAN_TENSOR = torch.tensor(IMAGENET_MEAN).view(3, 1, 1)
+_IMAGENET_STD_TENSOR = torch.tensor(IMAGENET_STD).view(3, 1, 1)
 
 Sample = tuple[str, int, int]
 
@@ -45,19 +44,32 @@ def _scan_samples(root: Path) -> list[Sample]:
     return samples
 
 
+def _to_float_tensor(image: np.ndarray) -> torch.Tensor:
+    """Convert a (H, W, C) uint8 BGR numpy array to a (C, H, W) float32 tensor in [0, 1]."""
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    image = cv2.resize(image, (INPUT_SIZE[1], INPUT_SIZE[0]))
+    return torch.from_numpy(image.astype(np.float32) / 255.0).permute(2, 0, 1)
+
+
 def load_reid_image(path: str | Path) -> torch.Tensor:
+    """Load, resize, and normalize a player-crop image (used for eval/inference)."""
     image = cv2.imread(str(path))
     if image is None:
         raise FileNotFoundError(f"Could not load image: {path}")
     return preprocess_reid_image(image)
 
 
+def _load_reid_image_raw(path: str | Path) -> torch.Tensor:
+    """Load and resize a player-crop image as a [0, 1] float tensor — no normalization."""
+    image = cv2.imread(str(path))
+    if image is None:
+        raise FileNotFoundError(f"Could not load image: {path}")
+    return _to_float_tensor(image)
+
+
 def preprocess_reid_image(image: np.ndarray) -> torch.Tensor:
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    image = cv2.resize(image, (INPUT_SIZE[1], INPUT_SIZE[0]))
-    image = image.astype(np.float32) / 255.0
-    image = (image - IMAGENET_MEAN_ARRAY) / IMAGENET_STD_ARRAY
-    return torch.from_numpy(image).permute(2, 0, 1).float()
+    tensor = _to_float_tensor(image)
+    return (tensor - _IMAGENET_MEAN_TENSOR) / _IMAGENET_STD_TENSOR
 
 
 class _BaseReIDImageDataset(Dataset):
@@ -73,21 +85,21 @@ class _BaseReIDImageDataset(Dataset):
 
 
 def build_train_transform(flip_prob: float = 0.5, erase_prob: float = 0.5) -> Callable[[torch.Tensor], torch.Tensor]:
+    """Return a transform pipeline for training."""
     return transforms.Compose(
         [
             transforms.RandomHorizontalFlip(p=flip_prob),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.05),
+            transforms.Pad(10),
+            transforms.RandomCrop((INPUT_SIZE[0], INPUT_SIZE[1])),
             transforms.RandomErasing(p=erase_prob, value="random"),
+            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
         ]
     )
 
 
 class SynergyReIDDataset(_BaseReIDImageDataset):
-    """Loads player crops from a flat directory of ``{pid}_{seq}_{frame}.jpeg`` files.
-
-    Returns (image_tensor, pid_label, cam_id) where pid_label is a contiguous
-    class index (0 … N-1) and cam_id is the sequence number (used at eval time
-    to exclude same-camera matches).
-    """
+    """Loads player crops from a flat directory of ``{pid}_{seq}_{frame}.jpeg`` files."""
 
     def __init__(
         self,
@@ -112,7 +124,7 @@ class SynergyReIDDataset(_BaseReIDImageDataset):
 
     def __getitem__(self, index: int):
         fname, pid, seq = self.samples[index]
-        img = self._load_image(fname)
+        img = _load_reid_image_raw(self.root / fname)
 
         if self.transform is not None:
             img = self.transform(img)
@@ -131,11 +143,6 @@ class QueryGalleryDataset(_BaseReIDImageDataset):
         fname, pid, seq = self.samples[index]
         img = self._load_image(fname)
         return img, pid, seq
-
-
-# ---------------------------------------------------------------------------
-# PK Sampler: sample P identities × K instances per batch
-# ---------------------------------------------------------------------------
 
 
 class PKSampler(Sampler):

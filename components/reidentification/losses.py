@@ -1,17 +1,16 @@
-"""ReID losses."""
+"""ReID losses: batch-hard triplet and ArcFace."""
 
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+__all__ = ["TripletLoss", "ArcFaceLoss"]
 
 
 class TripletLoss(nn.Module):
-    """Batch-hard triplet loss with soft margin.
-
-    For each anchor, selects the hardest positive (max distance) and the
-    hardest negative (min distance) within the batch.
-    """
+    """Batch-hard triplet loss with Euclidean distance and margin ranking."""
 
     def __init__(self, margin: float = 0.3):
         super().__init__()
@@ -32,3 +31,22 @@ class TripletLoss(nn.Module):
 
         target = torch.ones_like(hardest_pos)
         return self.ranking_loss(hardest_neg, hardest_pos, target)
+
+
+class ArcFaceLoss(nn.Module):
+    """Additive angular margin loss (ArcFace)."""
+
+    def __init__(self, num_classes: int, feature_dim: int = 2048, s: float = 30.0, m: float = 0.3):
+        super().__init__()
+        self.s = s
+        self.m = m
+        self.weight = nn.Parameter(torch.empty(num_classes, feature_dim))
+        nn.init.normal_(self.weight, std=0.01)
+
+    def forward(self, features: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        W = F.normalize(self.weight, p=2, dim=1)
+        cos_theta = torch.mm(features, W.T).clamp(-1 + 1e-7, 1 - 1e-7)
+        theta = cos_theta.acos()
+        one_hot = torch.zeros_like(cos_theta).scatter_(1, labels.view(-1, 1), 1)
+        logits = self.s * (one_hot * torch.cos(theta + self.m) + (1 - one_hot) * cos_theta)
+        return F.cross_entropy(logits, labels)
