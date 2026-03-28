@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass, field
 from typing import Sequence
 
 from common.classes.ball import BallDetections
+from common.classes.pass_event import PassEvent
 from common.classes.player import Player, PlayersDetections
 from common.classes.possession_segment import PossessionSegment
 
@@ -438,3 +440,47 @@ def greedy_possession_segments_soft_dribble(
         i = best_j + 1
 
     return segments
+
+
+@dataclass
+class BallPossession:
+    """
+    Encapsulates the full ball-possession pipeline:
+    assign per-frame possession, extract segments, apply them, and detect passes.
+    """
+
+    segments: list[PossessionSegment] = field(default_factory=list)
+    pass_events: list[PassEvent] = field(default_factory=list)
+
+    def run(
+        self,
+        players_detections: PlayersDetections,
+        ball_detections: BallDetections,
+        fps: float,
+        *,
+        bbox_expand_ratio: float = 0.05,
+        min_expand_px: int = 3,
+        other_max_share: float = 0.35,
+        min_owner_share: float = 0.55,
+        max_pass_gap_frames: int = 45,
+    ) -> None:
+        from .passes import find_team_passes
+
+        assign_ball_possession_soft_dribble(
+            players_detections,
+            ball_detections,
+            bbox_expand_ratio=bbox_expand_ratio,
+            min_expand_px=min_expand_px,
+        )
+        self.segments = greedy_possession_segments_soft_dribble(
+            players_detections,
+            fps=fps,
+            other_max_share=other_max_share,
+            min_owner_share=min_owner_share,
+        )
+        apply_possession_segments(players_detections, self.segments)
+        self.pass_events = find_team_passes(
+            self.segments,
+            players_detections,
+            max_gap_frames=max_pass_gap_frames,
+        )

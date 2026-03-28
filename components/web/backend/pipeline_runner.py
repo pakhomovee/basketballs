@@ -67,7 +67,12 @@ def _run_pipeline(job_id: str, video_path: str) -> None:
 
     # Export is an extra step on top of the shared pipeline.
     stage_logger.set_stage("Exporting annotations…", PIPELINE_TOTAL_STAGES)
-    annotation_data = export_annotations(result.players_detections, result.ball_detections, result.video_meta)
+    annotation_data = export_annotations(
+        result.players_detections,
+        result.ball_detections,
+        result.video_meta,
+        pass_events=result.pass_events,
+    )
     save_annotations(annotation_data, job_dir(job_id) / "annotations.json")
     stage_logger.set_stage("Done", total_stages)
 

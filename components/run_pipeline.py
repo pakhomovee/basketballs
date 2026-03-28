@@ -9,12 +9,7 @@ import cv2
 from ball_detector.detector import WASBBallDetector
 from court_detector.court_detector import CourtDetector
 from detector import Detector, enrich_detections_with_numbers, enrich_players_with_pose
-from actions.ball_possession import (
-    assign_ball_possession_soft_dribble,
-    apply_possession_segments,
-    greedy_possession_segments_soft_dribble,
-)
-from actions.passes import find_team_passes
+from actions.ball_possession import BallPossession
 from common.classes import CourtType
 from common.utils.models import ensure_models, get_model_paths
 from common.utils.utils import get_device
@@ -156,10 +151,10 @@ def run_pipeline(
     team_clustering.run(players_detections)
 
     stage_logger.set_stage("Possession & smoothing…", 9)
-    assign_ball_possession_soft_dribble(players_detections, ball_detections)
-    possession_segments = greedy_possession_segments_soft_dribble(players_detections, fps=video_fps)
-    apply_possession_segments(players_detections, possession_segments)
-    pass_events = find_team_passes(possession_segments, players_detections)
+    ball_possession = BallPossession()
+    ball_possession.run(players_detections, ball_detections, fps=video_fps)
+    possession_segments = ball_possession.segments
+    pass_events = ball_possession.pass_events
 
     if main_cfg.enable_smoothing:
         smooth_detection_coordinates(players_detections, cfg=cfg)

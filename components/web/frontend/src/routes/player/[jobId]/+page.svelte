@@ -6,6 +6,8 @@
 	import { DEFAULT_TOGGLES } from '$lib/types';
 	import VideoPlayer from '$lib/components/VideoPlayer.svelte';
 	import ControlPanel from '$lib/components/ControlPanel.svelte';
+	import PossessionPanel from '$lib/components/PossessionPanel.svelte';
+	import PassEventsPanel from '$lib/components/PassEventsPanel.svelte';
 	import ReidMatrixPanel from '$lib/components/ReidMatrixPanel.svelte';
 	import CommentsPanel from '$lib/components/CommentsPanel.svelte';
 
@@ -96,13 +98,25 @@
 			<ControlPanel bind:toggles />
 		</div>
 
-		<!-- Comments + ReID sidebar -->
+		<!-- Sidebar -->
 		<div
 			class="flex-1 min-w-0 flex flex-col border-l border-[var(--color-border)] bg-[var(--color-surface)]"
 		>
+			<!-- Possession indicator -->
+			<div class="px-3 py-2.5 border-b border-[var(--color-border)]">
+				<PossessionPanel {annotations} {currentFrame} colorMode={toggles.colorMode} />
+			</div>
 			<!-- Comments -->
-			<div class="basis-[38%] min-h-0 shrink-0 border-b border-[var(--color-border)]">
+			<div class="basis-[30%] min-h-0 shrink-0 border-b border-[var(--color-border)]">
 				<CommentsPanel jobId={jobId!} {currentTime} onSeek={handleSeek} />
+			</div>
+			<!-- Pass events -->
+			<div class="basis-[30%] min-h-0 shrink-0 border-b border-[var(--color-border)]">
+				<PassEventsPanel
+					passEvents={annotations?.pass_events ?? []}
+					{currentFrame}
+					onSeek={handleSeek}
+				/>
 			</div>
 			<!-- ReID matrix (scrollable remainder) -->
 			<div class="flex-1 min-h-0 overflow-y-auto px-3 py-2">

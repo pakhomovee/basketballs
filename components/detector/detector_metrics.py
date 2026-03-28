@@ -1,8 +1,8 @@
 """
-Bbox detection metrics (players and ball) on the test split of a YOLO-format dataset.
+Bbox detection metrics (players, ball, rim) on the test split of a YOLO-format dataset.
 
 Accepts path to dataset (data.yaml or root dir containing data.yaml) and optional model path.
-Computes metrics on the test split (test/) for class "player" (classes 2–8) or "ball" (class 0).
+Computes metrics on the test split (test/) for class "player" (classes 2–8), "ball" (class 0), or "rim".
 """
 
 from __future__ import annotations
@@ -13,13 +13,15 @@ from typing import NamedTuple
 import cv2
 import numpy as np
 import yaml
+from tqdm import tqdm
 
 from common.classes.detections import FrameDetections
-from .detector import Detector, get_frame_players_detections, get_frame_ball_detections
+from .detector import Detector, get_frame_players_detections, get_frame_ball_detections, get_frame_rim_detections
 
 
 PLAYER_CLASS_NAME = "player"
 BALL_CLASS_NAME = "ball"
+RIM_CLASS_NAME = "rim"
 
 # For mAP50-95: IoU thresholds from 0.5 to 0.95 step 0.05 (COCO-style)
 IOU_THRESHOLDS_MAP50_95 = (0.5, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95)
@@ -59,6 +61,11 @@ def _player_class_id(data_yaml: Path) -> int:
 def _ball_class_id(data_yaml: Path) -> int:
     """Index of class 'ball' in names from data.yaml."""
     return _class_id_from_yaml(data_yaml, BALL_CLASS_NAME)
+
+
+def _rim_class_id(data_yaml: Path) -> int:
+    """Index of class 'rim' in names from data.yaml."""
+    return _class_id_from_yaml(data_yaml, RIM_CLASS_NAME)
 
 
 def _iou(box_a: tuple[int, int, int, int], box_b: tuple[int, int, int, int]) -> float:
@@ -114,7 +121,7 @@ def load_test_gt_and_predictions(
     all_gt_boxes: list[list[tuple[int, int, int, int]]] = []
     all_pred_boxes: list[list[tuple[int, int, int, int, float]]] = []
 
-    for img_path in image_paths:
+    for img_path in tqdm(image_paths, desc="Metrics: test images", unit="img"):
         lbl_path = test_labels_dir / (img_path.stem + ".txt")
         img = cv2.imread(str(img_path))
         if img is None:
@@ -158,6 +165,82 @@ def load_test_gt_and_predictions(
     return all_gt_boxes, all_pred_boxes, len(image_paths)
 
 
+def load_test_gt_and_predictions_rfdetr_players(
+    dataset_path: str | Path,
+    model_path: str | Path | None,
+    conf_threshold: float,
+) -> tuple[list[list[tuple[int, int, int, int]]], list[list[tuple[int, int, int, int, float]]], int]:
+    """
+    Load test split, run RF-DETR detector, return GT and predictions per frame for players.
+    """
+    from .detector_rfdetr import DetectorRFDETR, get_frame_players_detections as get_frame_players_detections_rfdetr
+
+    data_yaml = _resolve_dataset_path(dataset_path)
+    root = data_yaml.parent.resolve()
+    test_images_dir = root / "test" / "images"
+    test_labels_dir = root / "test" / "labels"
+    if not test_images_dir.is_dir() or not test_labels_dir.is_dir():
+        raise FileNotFoundError(f"test/images or test/labels not found in dataset: {root}")
+
+    ext = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+    image_paths = sorted(p for p in test_images_dir.iterdir() if p.suffix.lower() in ext)
+    if not image_paths:
+        raise FileNotFoundError(f"No images in {test_images_dir}")
+
+    if model_path is not None:
+        detector = DetectorRFDETR(model_path=str(model_path), conf_threshold=conf_threshold)
+    else:
+        detector = DetectorRFDETR(conf_threshold=conf_threshold)
+
+    all_gt_boxes: list[list[tuple[int, int, int, int]]] = []
+    all_pred_boxes: list[list[tuple[int, int, int, int, float]]] = []
+
+    for img_path in tqdm(image_paths, desc="Metrics: test images", unit="img"):
+        lbl_path = test_labels_dir / (img_path.stem + ".txt")
+        img = cv2.imread(str(img_path))
+        if img is None:
+            continue
+        h, w = img.shape[:2]
+
+        gt_boxes: list[tuple[int, int, int, int]] = []
+        if lbl_path.is_file():
+            with open(lbl_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) < 5:
+                        continue
+                    try:
+                        cls = int(parts[0])
+                        x_c, y_c, bw, bh = map(float, parts[1:5])
+                    except (ValueError, IndexError):
+                        continue
+                    # Player classes in dataset labels for the old taxonomy: 2..8.
+                    # RF-DETR player extraction later handles detector-side class mapping.
+                    if cls < 2 or cls > 8:
+                        continue
+                    x1 = int((x_c - bw / 2) * w)
+                    y1 = int((y_c - bh / 2) * h)
+                    x2 = int((x_c + bw / 2) * w)
+                    y2 = int((y_c + bh / 2) * h)
+                    x1, x2 = max(0, min(x1, w)), max(0, min(x2, w))
+                    y1, y2 = max(0, min(y1, h)), max(0, min(y2, h))
+                    if x2 > x1 and y2 > y1:
+                        gt_boxes.append((x1, y1, x2, y2))
+
+        detections = detector.detect_frame(img)
+        frame_detections = FrameDetections(frame_id=0, detections=detections)
+        players = get_frame_players_detections_rfdetr(frame_detections, conf_threshold=conf_threshold)
+        pred_boxes = [(p.bbox[0], p.bbox[1], p.bbox[2], p.bbox[3], p.confidence) for p in players]
+
+        all_gt_boxes.append(gt_boxes)
+        all_pred_boxes.append(pred_boxes)
+
+    return all_gt_boxes, all_pred_boxes, len(image_paths)
+
+
 def load_test_gt_and_predictions_ball(
     dataset_path: str | Path,
     model_path: str | Path | None,
@@ -190,7 +273,7 @@ def load_test_gt_and_predictions_ball(
     all_gt_boxes: list[list[tuple[int, int, int, int]]] = []
     all_pred_boxes: list[list[tuple[int, int, int, int, float]]] = []
 
-    for img_path in image_paths:
+    for img_path in tqdm(image_paths, desc="Metrics: test images", unit="img"):
         lbl_path = test_labels_dir / (img_path.stem + ".txt")
         img = cv2.imread(str(img_path))
         if img is None:
@@ -228,6 +311,236 @@ def load_test_gt_and_predictions_ball(
         balls = get_frame_ball_detections(frame_detections, conf_threshold=conf_threshold)
         # dets_ball = [d for d in detections if d.class_id == ball_cls_id and d.confidence >= conf_threshold]
         pred_boxes = [(b.bbox[0], b.bbox[1], b.bbox[2], b.bbox[3], b.confidence) for b in balls]
+
+        all_gt_boxes.append(gt_boxes)
+        all_pred_boxes.append(pred_boxes)
+
+    return all_gt_boxes, all_pred_boxes, len(image_paths)
+
+
+def load_test_gt_and_predictions_ball_rfdetr(
+    dataset_path: str | Path,
+    model_path: str | Path | None,
+    conf_threshold: float,
+    ball_cls_id: int = 0,
+) -> tuple[list[list[tuple[int, int, int, int]]], list[list[tuple[int, int, int, int, float]]], int]:
+    """
+    Load test split, run RF-DETR detector, return GT and predictions per frame for ball.
+    """
+    from .detector_rfdetr import DetectorRFDETR, get_frame_ball_detections as get_frame_ball_detections_rfdetr
+
+    data_yaml = _resolve_dataset_path(dataset_path)
+    root = data_yaml.parent.resolve()
+    test_images_dir = root / "test" / "images"
+    test_labels_dir = root / "test" / "labels"
+    if not test_images_dir.is_dir() or not test_labels_dir.is_dir():
+        raise FileNotFoundError(f"test/images or test/labels not found in dataset: {root}")
+
+    ext = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+    image_paths = sorted(p for p in test_images_dir.iterdir() if p.suffix.lower() in ext)
+    if not image_paths:
+        raise FileNotFoundError(f"No images in {test_images_dir}")
+
+    if model_path is not None:
+        detector = DetectorRFDETR(model_path=str(model_path), conf_threshold=conf_threshold)
+    else:
+        detector = DetectorRFDETR(conf_threshold=conf_threshold)
+
+    all_gt_boxes: list[list[tuple[int, int, int, int]]] = []
+    all_pred_boxes: list[list[tuple[int, int, int, int, float]]] = []
+
+    for img_path in tqdm(image_paths, desc="Metrics: test images", unit="img"):
+        lbl_path = test_labels_dir / (img_path.stem + ".txt")
+        img = cv2.imread(str(img_path))
+        if img is None:
+            continue
+        h, w = img.shape[:2]
+
+        gt_boxes: list[tuple[int, int, int, int]] = []
+        if lbl_path.is_file():
+            with open(lbl_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) < 5:
+                        continue
+                    try:
+                        cls = int(parts[0])
+                        x_c, y_c, bw, bh = map(float, parts[1:5])
+                    except (ValueError, IndexError):
+                        continue
+                    if cls != ball_cls_id:
+                        continue
+                    x1 = int((x_c - bw / 2) * w)
+                    y1 = int((y_c - bh / 2) * h)
+                    x2 = int((x_c + bw / 2) * w)
+                    y2 = int((y_c + bh / 2) * h)
+                    x1, x2 = max(0, min(x1, w)), max(0, min(x2, w))
+                    y1, y2 = max(0, min(y1, h)), max(0, min(y2, h))
+                    if x2 > x1 and y2 > y1:
+                        gt_boxes.append((x1, y1, x2, y2))
+
+        detections = detector.detect_frame(img)
+        frame_detections = FrameDetections(frame_id=0, detections=detections)
+        balls = get_frame_ball_detections_rfdetr(frame_detections, conf_threshold=conf_threshold)
+        pred_boxes = [(b.bbox[0], b.bbox[1], b.bbox[2], b.bbox[3], b.confidence) for b in balls]
+
+        all_gt_boxes.append(gt_boxes)
+        all_pred_boxes.append(pred_boxes)
+
+    return all_gt_boxes, all_pred_boxes, len(image_paths)
+
+
+def load_test_gt_and_predictions_rim(
+    dataset_path: str | Path,
+    model_path: str | Path | None,
+    conf_threshold: float,
+    rim_cls_id: int | None = None,
+) -> tuple[list[list[tuple[int, int, int, int]]], list[list[tuple[int, int, int, int, float]]], int]:
+    """
+    Load test split, run detector, return GT and predictions per frame for rim.
+
+    Returns:
+        (all_gt_boxes, all_pred_boxes, n_images) — rim class only.
+    """
+    data_yaml = _resolve_dataset_path(dataset_path)
+    root = data_yaml.parent.resolve()
+    test_images_dir = root / "test" / "images"
+    test_labels_dir = root / "test" / "labels"
+    if not test_images_dir.is_dir() or not test_labels_dir.is_dir():
+        raise FileNotFoundError(f"test/images or test/labels not found in dataset: {root}")
+    if rim_cls_id is None:
+        rim_cls_id = _rim_class_id(data_yaml)
+
+    ext = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+    image_paths = sorted(p for p in test_images_dir.iterdir() if p.suffix.lower() in ext)
+    if not image_paths:
+        raise FileNotFoundError(f"No images in {test_images_dir}")
+
+    if model_path is not None:
+        detector = Detector(model_path=str(model_path), conf_threshold=conf_threshold)
+    else:
+        detector = Detector(conf_threshold=conf_threshold)
+
+    all_gt_boxes: list[list[tuple[int, int, int, int]]] = []
+    all_pred_boxes: list[list[tuple[int, int, int, int, float]]] = []
+
+    for img_path in tqdm(image_paths, desc="Metrics: test images", unit="img"):
+        lbl_path = test_labels_dir / (img_path.stem + ".txt")
+        img = cv2.imread(str(img_path))
+        if img is None:
+            continue
+        h, w = img.shape[:2]
+
+        gt_boxes: list[tuple[int, int, int, int]] = []
+        if lbl_path.is_file():
+            with open(lbl_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) < 5:
+                        continue
+                    try:
+                        cls = int(parts[0])
+                        x_c, y_c, bw, bh = map(float, parts[1:5])
+                    except (ValueError, IndexError):
+                        continue
+                    if cls != rim_cls_id:
+                        continue
+                    x1 = int((x_c - bw / 2) * w)
+                    y1 = int((y_c - bh / 2) * h)
+                    x2 = int((x_c + bw / 2) * w)
+                    y2 = int((y_c + bh / 2) * h)
+                    x1, x2 = max(0, min(x1, w)), max(0, min(x2, w))
+                    y1, y2 = max(0, min(y1, h)), max(0, min(y2, h))
+                    if x2 > x1 and y2 > y1:
+                        gt_boxes.append((x1, y1, x2, y2))
+
+        detections = detector.detect_frame(img)
+        frame_detections = FrameDetections(frame_id=0, detections=detections)
+        rims = get_frame_rim_detections(frame_detections, conf_threshold=conf_threshold)
+        pred_boxes = [(r.x1, r.y1, r.x2, r.y2, r.confidence) for r in rims]
+
+        all_gt_boxes.append(gt_boxes)
+        all_pred_boxes.append(pred_boxes)
+
+    return all_gt_boxes, all_pred_boxes, len(image_paths)
+
+
+def load_test_gt_and_predictions_rim_rfdetr(
+    dataset_path: str | Path,
+    model_path: str | Path | None,
+    conf_threshold: float,
+    rim_cls_id: int | None = None,
+) -> tuple[list[list[tuple[int, int, int, int]]], list[list[tuple[int, int, int, int, float]]], int]:
+    """
+    Load test split, run RF-DETR detector, return GT and predictions per frame for rim.
+    """
+    from .detector_rfdetr import DetectorRFDETR, get_frame_rim_detections as get_frame_rim_detections_rfdetr
+
+    data_yaml = _resolve_dataset_path(dataset_path)
+    root = data_yaml.parent.resolve()
+    test_images_dir = root / "test" / "images"
+    test_labels_dir = root / "test" / "labels"
+    if not test_images_dir.is_dir() or not test_labels_dir.is_dir():
+        raise FileNotFoundError(f"test/images or test/labels not found in dataset: {root}")
+    if rim_cls_id is None:
+        rim_cls_id = _rim_class_id(data_yaml)
+
+    ext = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+    image_paths = sorted(p for p in test_images_dir.iterdir() if p.suffix.lower() in ext)
+    if not image_paths:
+        raise FileNotFoundError(f"No images in {test_images_dir}")
+
+    if model_path is not None:
+        detector = DetectorRFDETR(model_path=str(model_path), conf_threshold=conf_threshold)
+    else:
+        detector = DetectorRFDETR(conf_threshold=conf_threshold)
+
+    all_gt_boxes: list[list[tuple[int, int, int, int]]] = []
+    all_pred_boxes: list[list[tuple[int, int, int, int, float]]] = []
+
+    for img_path in tqdm(image_paths, desc="Metrics: test images", unit="img"):
+        lbl_path = test_labels_dir / (img_path.stem + ".txt")
+        img = cv2.imread(str(img_path))
+        if img is None:
+            continue
+        h, w = img.shape[:2]
+
+        gt_boxes: list[tuple[int, int, int, int]] = []
+        if lbl_path.is_file():
+            with open(lbl_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) < 5:
+                        continue
+                    try:
+                        cls = int(parts[0])
+                        x_c, y_c, bw, bh = map(float, parts[1:5])
+                    except (ValueError, IndexError):
+                        continue
+                    if cls != rim_cls_id:
+                        continue
+                    x1 = int((x_c - bw / 2) * w)
+                    y1 = int((y_c - bh / 2) * h)
+                    x2 = int((x_c + bw / 2) * w)
+                    y2 = int((y_c + bh / 2) * h)
+                    x1, x2 = max(0, min(x1, w)), max(0, min(x2, w))
+                    y1, y2 = max(0, min(y1, h)), max(0, min(y2, h))
+                    if x2 > x1 and y2 > y1:
+                        gt_boxes.append((x1, y1, x2, y2))
+
+        detections = detector.detect_frame(img)
+        frame_detections = FrameDetections(frame_id=0, detections=detections)
+        rims = get_frame_rim_detections_rfdetr(frame_detections, conf_threshold=conf_threshold)
+        pred_boxes = [(r.x1, r.y1, r.x2, r.y2, r.confidence) for r in rims]
 
         all_gt_boxes.append(gt_boxes)
         all_pred_boxes.append(pred_boxes)
@@ -321,12 +634,12 @@ def _ap_at_iou(
     if n_gt == 0 or not precisions:
         return 0.0
     ap = 0.0
-    for t in np.linspace(0, 1, 11):
+    for t in np.linspace(0, 1, 101):
         mask = [r >= t for r in recalls]
         if not any(mask):
             continue
         ap += max(p for p, m in zip(precisions, mask) if m)
-    return ap / 11
+    return ap / 101
 
 
 def compute_map50(
@@ -367,7 +680,7 @@ class PlayerDetectionMetrics(NamedTuple):
 def compute_player_detection_metrics(
     dataset_path: str | Path,
     model_path: str | Path | None = None,
-    conf_threshold: float = 0.25,
+    conf_threshold: float = 0.001,
     iou_threshold: float = 0.5,
 ) -> PlayerDetectionMetrics:
     """
@@ -377,6 +690,41 @@ def compute_player_detection_metrics(
     precision/recall/F1, mAP50 and mAP50-95.
     """
     all_gt_boxes, all_pred_boxes, n_images = load_test_gt_and_predictions(dataset_path, model_path, conf_threshold)
+    n_gt = sum(len(g) for g in all_gt_boxes)
+    n_pred = sum(len(p) for p in all_pred_boxes)
+
+    tp, fp, fn = compute_tp_fp_fn(all_gt_boxes, all_pred_boxes, iou_threshold)
+    precision, recall, f1 = compute_precision_recall_f1(tp, fp, fn)
+    map50 = compute_map50(all_gt_boxes, all_pred_boxes)
+    map50_95 = compute_map50_95(all_gt_boxes, all_pred_boxes)
+
+    return PlayerDetectionMetrics(
+        precision=precision,
+        recall=recall,
+        f1=f1,
+        map50=map50,
+        map50_95=map50_95,
+        n_images=n_images,
+        n_gt=n_gt,
+        n_pred=n_pred,
+        tp=tp,
+        fp=fp,
+        fn=fn,
+    )
+
+
+def compute_player_detection_metrics_rfdetr(
+    dataset_path: str | Path,
+    model_path: str | Path | None = None,
+    conf_threshold: float = 0.001,
+    iou_threshold: float = 0.5,
+) -> PlayerDetectionMetrics:
+    """
+    Compute player detection metrics on the test split using RF-DETR backend.
+    """
+    all_gt_boxes, all_pred_boxes, n_images = load_test_gt_and_predictions_rfdetr_players(
+        dataset_path, model_path, conf_threshold
+    )
     n_gt = sum(len(g) for g in all_gt_boxes)
     n_pred = sum(len(p) for p in all_pred_boxes)
 
@@ -421,10 +769,26 @@ class BallDetectionMetrics(NamedTuple):
     fn: int
 
 
+class RimDetectionMetrics(NamedTuple):
+    """Rim detection metrics."""
+
+    precision: float
+    recall: float
+    f1: float
+    map50: float
+    map50_95: float
+    n_images: int
+    n_gt: int
+    n_pred: int
+    tp: int
+    fp: int
+    fn: int
+
+
 def compute_ball_detection_metrics(
     dataset_path: str | Path,
     model_path: str | Path | None = None,
-    conf_threshold: float = 0.25,
+    conf_threshold: float = 0.001,
     iou_threshold: float = 0.5,
 ) -> BallDetectionMetrics:
     """
@@ -454,13 +818,121 @@ def compute_ball_detection_metrics(
     )
 
 
+def compute_ball_detection_metrics_rfdetr(
+    dataset_path: str | Path,
+    model_path: str | Path | None = None,
+    conf_threshold: float = 0.001,
+    iou_threshold: float = 0.5,
+) -> BallDetectionMetrics:
+    """
+    Compute ball detection metrics on the test split using RF-DETR backend.
+    """
+    all_gt_boxes, all_pred_boxes, n_images = load_test_gt_and_predictions_ball_rfdetr(
+        dataset_path, model_path, conf_threshold
+    )
+    n_gt = sum(len(g) for g in all_gt_boxes)
+    n_pred = sum(len(p) for p in all_pred_boxes)
+
+    tp, fp, fn = compute_tp_fp_fn(all_gt_boxes, all_pred_boxes, iou_threshold)
+    precision, recall, f1 = compute_precision_recall_f1(tp, fp, fn)
+    map50 = compute_map50(all_gt_boxes, all_pred_boxes)
+    map50_95 = compute_map50_95(all_gt_boxes, all_pred_boxes)
+
+    return BallDetectionMetrics(
+        precision=precision,
+        recall=recall,
+        f1=f1,
+        map50=map50,
+        map50_95=map50_95,
+        n_images=n_images,
+        n_gt=n_gt,
+        n_pred=n_pred,
+        tp=tp,
+        fp=fp,
+        fn=fn,
+    )
+
+
+def compute_rim_detection_metrics(
+    dataset_path: str | Path,
+    model_path: str | Path | None = None,
+    conf_threshold: float = 0.001,
+    iou_threshold: float = 0.5,
+) -> RimDetectionMetrics:
+    """
+    Compute rim detection metrics on the test split (P, R, F1, mAP50, mAP50-95).
+    """
+    all_gt_boxes, all_pred_boxes, n_images = load_test_gt_and_predictions_rim(dataset_path, model_path, conf_threshold)
+    n_gt = sum(len(g) for g in all_gt_boxes)
+    n_pred = sum(len(p) for p in all_pred_boxes)
+
+    tp, fp, fn = compute_tp_fp_fn(all_gt_boxes, all_pred_boxes, iou_threshold)
+    precision, recall, f1 = compute_precision_recall_f1(tp, fp, fn)
+    map50 = compute_map50(all_gt_boxes, all_pred_boxes)
+    map50_95 = compute_map50_95(all_gt_boxes, all_pred_boxes)
+
+    return RimDetectionMetrics(
+        precision=precision,
+        recall=recall,
+        f1=f1,
+        map50=map50,
+        map50_95=map50_95,
+        n_images=n_images,
+        n_gt=n_gt,
+        n_pred=n_pred,
+        tp=tp,
+        fp=fp,
+        fn=fn,
+    )
+
+
+def compute_rim_detection_metrics_rfdetr(
+    dataset_path: str | Path,
+    model_path: str | Path | None = None,
+    conf_threshold: float = 0.001,
+    iou_threshold: float = 0.5,
+) -> RimDetectionMetrics:
+    """
+    Compute rim detection metrics on the test split using RF-DETR backend.
+    """
+    all_gt_boxes, all_pred_boxes, n_images = load_test_gt_and_predictions_rim_rfdetr(
+        dataset_path, model_path, conf_threshold
+    )
+    n_gt = sum(len(g) for g in all_gt_boxes)
+    n_pred = sum(len(p) for p in all_pred_boxes)
+
+    tp, fp, fn = compute_tp_fp_fn(all_gt_boxes, all_pred_boxes, iou_threshold)
+    precision, recall, f1 = compute_precision_recall_f1(tp, fp, fn)
+    map50 = compute_map50(all_gt_boxes, all_pred_boxes)
+    map50_95 = compute_map50_95(all_gt_boxes, all_pred_boxes)
+
+    return RimDetectionMetrics(
+        precision=precision,
+        recall=recall,
+        f1=f1,
+        map50=map50,
+        map50_95=map50_95,
+        n_images=n_images,
+        n_gt=n_gt,
+        n_pred=n_pred,
+        tp=tp,
+        fp=fp,
+        fn=fn,
+    )
+
+
 def print_ball_metrics(metrics: BallDetectionMetrics) -> None:
     """Print ball detection metrics to console."""
     _print_detection_metrics(metrics, "ball")
 
 
+def print_rim_metrics(metrics: RimDetectionMetrics) -> None:
+    """Print rim detection metrics to console."""
+    _print_detection_metrics(metrics, "rim")
+
+
 def _print_detection_metrics(
-    metrics: PlayerDetectionMetrics | BallDetectionMetrics,
+    metrics: PlayerDetectionMetrics | BallDetectionMetrics | RimDetectionMetrics,
     title: str,
 ) -> None:
     """Common routine to print metrics to console."""
@@ -479,28 +951,62 @@ def _print_detection_metrics(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Detection metrics (players or ball) on YOLO dataset test split")
+    parser = argparse.ArgumentParser(description="Detection metrics (players, ball, rim) on YOLO dataset test split")
     parser.add_argument("dataset", type=str, nargs="?", default=None, help="Path to data.yaml or dataset root")
     parser.add_argument("--ball", "-b", action="store_true", help="Compute ball metrics (default: players)")
-    parser.add_argument("--model", "-m", type=str, default=None, help="Path to .pt model")
-    parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold")
+    parser.add_argument("--rim", "-r", action="store_true", help="Compute rim metrics (default: players)")
+    parser.add_argument("--rfdetr", action="store_true", help="Use RF-DETR backend (players/ball/rim)")
+    parser.add_argument("--model", "-m", type=str, default=None, help="Path to detector checkpoint")
+    parser.add_argument("--conf", type=float, default=0.001, help="Confidence threshold")
     parser.add_argument("--iou", type=float, default=0.5, help="IoU threshold for P/R")
     args = parser.parse_args()
 
     dataset = args.dataset
-    if args.ball:
-        metrics = compute_ball_detection_metrics(
-            dataset,
-            model_path=args.model,
-            conf_threshold=args.conf,
-            iou_threshold=args.iou,
-        )
+    if args.rim:
+        if args.rfdetr:
+            metrics = compute_rim_detection_metrics_rfdetr(
+                dataset,
+                model_path=args.model,
+                conf_threshold=args.conf,
+                iou_threshold=args.iou,
+            )
+        else:
+            metrics = compute_rim_detection_metrics(
+                dataset,
+                model_path=args.model,
+                conf_threshold=args.conf,
+                iou_threshold=args.iou,
+            )
+        print_rim_metrics(metrics)
+    elif args.ball:
+        if args.rfdetr:
+            metrics = compute_ball_detection_metrics_rfdetr(
+                dataset,
+                model_path=args.model,
+                conf_threshold=args.conf,
+                iou_threshold=args.iou,
+            )
+        else:
+            metrics = compute_ball_detection_metrics(
+                dataset,
+                model_path=args.model,
+                conf_threshold=args.conf,
+                iou_threshold=args.iou,
+            )
         print_ball_metrics(metrics)
     else:
-        metrics = compute_player_detection_metrics(
-            dataset,
-            model_path=args.model,
-            conf_threshold=args.conf,
-            iou_threshold=args.iou,
-        )
+        if args.rfdetr:
+            metrics = compute_player_detection_metrics_rfdetr(
+                dataset,
+                model_path=args.model,
+                conf_threshold=args.conf,
+                iou_threshold=args.iou,
+            )
+        else:
+            metrics = compute_player_detection_metrics(
+                dataset,
+                model_path=args.model,
+                conf_threshold=args.conf,
+                iou_threshold=args.iou,
+            )
         print_metrics(metrics)
