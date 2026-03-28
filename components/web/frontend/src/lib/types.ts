@@ -19,6 +19,7 @@ export interface PlayerAnnotation {
 	speed: number | null;
 	skeleton: [number, number, number][] | null;
 	mask_polygon: [number, number][] | null;
+	is_possession: boolean;
 }
 
 export interface BallAnnotation {
@@ -38,9 +39,19 @@ export interface FrameAnnotation {
 	reid_cross_frame_matrix: ReidMatrix | null;
 }
 
+export interface PassEventAnnotation {
+	frame: number;
+	from_frame: number;
+	from_player_id: number;
+	to_player_id: number;
+	team_id: number;
+	timestamp_sec: number;
+}
+
 export interface AnnotationData {
 	metadata: VideoMeta;
 	frames: Record<string, FrameAnnotation>;
+	pass_events: PassEventAnnotation[];
 }
 
 export type JobStatus = 'queued' | 'processing' | 'done' | 'failed';

@@ -9,6 +9,18 @@ from detector.detector import (
     get_frame_number_detections,
     get_frame_pose_detections,
 )
+from detector.detector_rfdetr import DetectorRFDETR
+from detector.detector_rfdetr import (
+    get_frame_ball_detections as get_frame_ball_detections_rfdetr,
+    get_frame_players_detections as get_frame_players_detections_rfdetr,
+    get_frame_rim_detections as get_frame_rim_detections_rfdetr,
+    get_video_ball_detections as get_video_ball_detections_rfdetr,
+    get_video_rim_detections as get_video_rim_detections_rfdetr,
+    get_video_players_detections as get_video_players_detections_rfdetr,
+    get_players_detections as get_players_detections_rfdetr,
+    visualize_players_detections as visualize_players_detections_rfdetr,
+    visualize_all_detections as visualize_all_detections_rfdetr,
+)
 from detector.enrich import (
     enrich_detections_with_numbers,
     enrich_players_with_pose,
@@ -19,6 +31,16 @@ from detector.enrich import (
 
 __all__ = [
     "Detector",
+    "DetectorRFDETR",
+    "get_frame_ball_detections_rfdetr",
+    "get_frame_players_detections_rfdetr",
+    "get_frame_rim_detections_rfdetr",
+    "get_video_ball_detections_rfdetr",
+    "get_video_rim_detections_rfdetr",
+    "get_video_players_detections_rfdetr",
+    "get_players_detections_rfdetr",
+    "visualize_players_detections_rfdetr",
+    "visualize_all_detections_rfdetr",
     "get_frame_players_detections",
     "get_video_players_detections",
     "get_video_ball_detections",

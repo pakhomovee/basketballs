@@ -9,6 +9,7 @@ import numpy as np
 
 from common.classes.player import Player, PlayersDetections
 from common.classes.ball import Ball, BallDetections
+from common.classes.pass_event import PassEvent
 from common.distances import cosine_dist
 
 
@@ -55,6 +56,7 @@ def _serialize_player(player: Player) -> dict:
         "speed": _to_json_safe(player.speed),
         "skeleton": skeleton,
         "mask_polygon": mask_polygon,
+        "is_possession": bool(getattr(player, "is_possession", False)),
     }
 
 
@@ -98,10 +100,22 @@ def _compute_cross_frame_reid_matrix(
     return {"row_ids": row_ids, "col_ids": col_ids, "distances": distances}
 
 
+def _serialize_pass_event(event: PassEvent, fps: float) -> dict:
+    return {
+        "frame": event.frame,
+        "from_frame": event.from_frame,
+        "from_player_id": event.from_player_id,
+        "to_player_id": event.to_player_id,
+        "team_id": event.team_id,
+        "timestamp_sec": round(event.frame / fps, 2) if fps > 0 else 0,
+    }
+
+
 def export_annotations(
     players_detections: PlayersDetections,
     ball_detections: BallDetections | None,
     video_meta: dict,
+    pass_events: list[PassEvent] | None = None,
 ) -> dict:
     """Build a complete annotation dict ready for JSON serialization."""
     all_frame_ids = sorted(set(players_detections.keys()) | set((ball_detections or {}).keys()))
@@ -122,7 +136,10 @@ def export_annotations(
 
         prev_players = curr_players
 
-    return {"metadata": video_meta, "frames": frames}
+    fps = video_meta.get("fps", 25.0)
+    serialized_passes = [_serialize_pass_event(e, fps) for e in (pass_events or [])]
+
+    return {"metadata": video_meta, "frames": frames, "pass_events": serialized_passes}
 
 
 def save_annotations(data: dict, path: str | Path) -> None:

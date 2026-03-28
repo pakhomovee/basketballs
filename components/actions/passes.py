@@ -68,6 +68,7 @@ def find_team_passes(
         out.append(
             PassEvent(
                 frame=b.start_frame,
+                from_frame=a.end_frame,
                 from_player_id=a.owner_player_id,
                 to_player_id=b.owner_player_id,
                 team_id=team_from,
