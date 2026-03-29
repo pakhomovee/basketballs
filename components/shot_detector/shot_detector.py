@@ -38,8 +38,9 @@ from shot_detector.dataset import (
 from shot_detector.model import MultiStageTCN
 from shot_detector.shot_embedder import ShotEmbedder
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-log = logging.getLogger(__name__)
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    log = logging.getLogger(__name__)
 
 SHOT_CHECKPOINT_FILENAME = "shot_detection_model.pt"
 SHOT_META_KEYS = ("input_dim", "n_classes", "n_stages", "n_filters", "n_layers")

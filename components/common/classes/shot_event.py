@@ -7,7 +7,7 @@ from dataclasses import dataclass
 class ShotEvent:
     frame_start: int
     frame_end: int
-    """Start end end of the shot event."""
+    """Start and end of the shot event."""
 
     is_make: bool
     """Is the shot a make (i. e. successful shot)"""

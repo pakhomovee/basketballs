@@ -172,7 +172,6 @@ def build_training_dataset(
     include_invalid: bool = False,
     court_type: str = "nba",
     rim_conf_threshold: float = 0.1,
-    slice_to_clip_range: bool = True,
     overwrite: bool = False,
     limit: int | None = None,
 ) -> None:
@@ -420,14 +419,13 @@ def _parse_args():
 
 if __name__ == "__main__":
     args = _parse_args()
-    cfg = (
-        load_default_config() if args.config is None else load_default_config()
-    )  # keep defaults if custom path is added later
     if args.config is not None:
         # Late import to avoid circular imports for older environments
         from config import load_app_config
 
         cfg = load_app_config(args.config)
+    else:
+        cfg = load_default_config()
 
     build_training_dataset(
         dataset_dir=args.dataset_dir,
