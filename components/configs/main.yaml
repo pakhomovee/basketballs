@@ -21,6 +21,7 @@ court_detector:
 ball_detector:
   score_threshold: 0.5
   max_disp_ratio: 0.3333333333
+  step: 1 # step for wasb ball detector, should be 1 or 3
 
 detector:
   initial_threshold: 0.1
@@ -88,6 +89,8 @@ models:
   seg_url: "https://disk.yandex.ru/d/dpjzmKkadg-nZg"
   wasb_filename: "wasb_basketball_best.pth.tar"
   wasb_url: "https://disk.yandex.ru/d/JZQN5HEOKOegog"
+  shot_detection_filename: "shot_detection_model.pt"
+  shot_detection_url: "https://disk.yandex.ru/d/h2kTEC7_I7WsQg"
 
 benchmarks:
   tracking:

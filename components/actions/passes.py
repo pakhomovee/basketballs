@@ -46,7 +46,7 @@ def find_team_passes(
         max_gap_frames: Maximum idle frames allowed between the two possession segments.
 
     Returns:
-        List of `PassEvent`; `frame` is the start frame of the receiving segment.
+        List of `PassEvent`; `frame_end` is the start frame of the receiving segment.
     """
     segs = sorted(possession_segments, key=lambda s: (s.start_frame, s.end_frame))
     out: list[PassEvent] = []
@@ -67,8 +67,8 @@ def find_team_passes(
 
         out.append(
             PassEvent(
-                frame=b.start_frame,
-                from_frame=a.end_frame,
+                frame_start=a.end_frame,
+                frame_end=b.start_frame,
                 from_player_id=a.owner_player_id,
                 to_player_id=b.owner_player_id,
                 team_id=team_from,

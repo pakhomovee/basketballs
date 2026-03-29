@@ -40,18 +40,31 @@ export interface FrameAnnotation {
 }
 
 export interface PassEventAnnotation {
-	frame: number;
-	from_frame: number;
+	frame_start: number;
+	frame_end: number;
 	from_player_id: number;
 	to_player_id: number;
 	team_id: number;
 	timestamp_sec: number;
 }
 
+export interface ShotEventAnnotation {
+	frame_start: number;
+	frame_end: number;
+	is_make: boolean;
+	make_start: number | null;
+	make_end: number | null;
+	timestamp_start_sec: number;
+	timestamp_end_sec: number;
+	make_timestamp_start_sec: number | null;
+	make_timestamp_end_sec: number | null;
+}
+
 export interface AnnotationData {
 	metadata: VideoMeta;
 	frames: Record<string, FrameAnnotation>;
 	pass_events: PassEventAnnotation[];
+	shot_events?: ShotEventAnnotation[];
 }
 
 export type JobStatus = 'queued' | 'processing' | 'done' | 'failed';

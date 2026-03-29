@@ -36,6 +36,7 @@ class BallDetectorConfig(BaseModel):
 
     score_threshold: float = 0.3
     max_disp_ratio: float = 1 / 3
+    step: int = 1
 
 
 class DetectorConfig(BaseModel):
@@ -122,6 +123,9 @@ class ModelConfig(BaseModel):
 
     wasb_filename: str = "wasb_basketball_best.pth.tar"
     wasb_url: str = "https://disk.yandex.ru/d/JZQN5HEOKOegog"
+
+    shot_detection_filename: str = "shot_detection_model.pt"
+    shot_detection_url: str = "https://disk.yandex.ru/d/h2kTEC7_I7WsQg"
 
 
 class BenchmarkDataset(BaseModel):

@@ -67,6 +67,38 @@ class VideoReader:
         """Source frame index corresponding to logical frame *logical*."""
         return min(round(logical * self._fps_ratio), max(self._src_total - 1, 0))
 
+    @property
+    def src_frame_count(self) -> int:
+        """Number of frames in the source file (native timeline)."""
+        return self._src_total
+
+    def nearest_logical_for_physical(self, physical_index: int) -> int:
+        """
+        Logical frame index whose source frame is closest to *physical_index*
+        (same mapping as :meth:`physical_frame_for` / iteration order).
+
+        Use to remap annotations stored in native/source frame indices to the
+        project's target FPS timeline.
+        """
+        T = self._total_frames
+        if T <= 0:
+            return 0
+        p_max = self.physical_frame_for(T - 1)
+        p = max(0, min(int(physical_index), p_max))
+
+        lo, hi = 0, T - 1
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if self.physical_frame_for(mid) <= p:
+                lo = mid
+            else:
+                hi = mid - 1
+
+        candidates = [lo]
+        if lo + 1 < T:
+            candidates.append(lo + 1)
+        return min(candidates, key=lambda x: (abs(self.physical_frame_for(x) - p), x))
+
     def read(self) -> tuple[bool, np.ndarray | None]:
         """cv2.VideoCapture-compatible ``read()``."""
         result = self.next_frame()

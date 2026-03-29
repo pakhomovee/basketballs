@@ -3,6 +3,7 @@
 	import type { AnnotationData, ToggleState, FrameAnnotation } from '$lib/types';
 	import AnnotationCanvas from './AnnotationCanvas.svelte';
 	import CourtMinimap from './CourtMinimap.svelte';
+	import SeekBarTimeline from './SeekBarTimeline.svelte';
 	import { Muxer, ArrayBufferTarget } from 'webm-muxer';
 	import { drawAnnotations } from '$lib/draw';
 
@@ -433,16 +434,19 @@
 				{formatTime(currentTime)} / {formatTime(displayDuration)}
 			</span>
 
-			<!-- Seek bar -->
-			<input
-				type="range"
-				min="0"
-				max={displayDuration || 1}
-				step="0.01"
-				value={currentTime}
-				oninput={onSeek}
-				class="flex-1 h-1 accent-[var(--color-accent)] cursor-pointer"
-			/>
+			<!-- Seek + event timeline (shots + passes) -->
+			<div class="flex-1 flex flex-col gap-1 min-w-0 self-stretch justify-center">
+				<SeekBarTimeline {annotations} {currentTime} duration={displayDuration} />
+				<input
+					type="range"
+					min="0"
+					max={displayDuration || 1}
+					step="0.01"
+					value={currentTime}
+					oninput={onSeek}
+					class="w-full h-1 accent-[var(--color-accent)] cursor-pointer shrink-0"
+				/>
+			</div>
 
 			<!-- Frame counter -->
 			<span class="text-xs text-[var(--color-text-muted)] whitespace-nowrap">

@@ -20,6 +20,7 @@ class ModelPaths:
     reid: Path
     seg: Path
     wasb: Path
+    shot_detection: Path
 
 
 def get_models_dir(cfg: "AppConfig") -> Path:
@@ -41,6 +42,7 @@ def get_model_paths(cfg: "AppConfig") -> ModelPaths:
         reid=d / m.reid_filename,
         seg=d / m.seg_filename,
         wasb=d / m.wasb_filename,
+        shot_detection=d / m.shot_detection_filename,
     )
 
 
@@ -57,6 +59,7 @@ def ensure_models(cfg: "AppConfig") -> None:
         (paths.reid, m.reid_url),
         (paths.seg, m.seg_url),
         (paths.wasb, m.wasb_url),
+        (paths.shot_detection, m.shot_detection_url),
     ]:
         if not path.exists():
             download(url, path.name, str(models_dir))

@@ -463,9 +463,7 @@ def run_video(args):
     # )
 
     vr = VideoReader(str(args.video))
-    homographies, frames_sizes, keypoints_detections, losses = detector.extract_homographies_from_video_v2(
-        vr, court_constants
-    )
+    homographies, keypoints_detections, losses = detector.extract_homographies_from_video_v2(vr, court_constants)
     # losses = None
 
     # Rewind for visualization
@@ -505,7 +503,8 @@ def run_video(args):
             break
 
         H = homographies[frame_idx]
-        frame_w, frame_h = frames_sizes[frame_idx]
+        frame_w = int(vr.get(cv2.CAP_PROP_FRAME_WIDTH) or vr.width)
+        frame_h = int(vr.get(cv2.CAP_PROP_FRAME_HEIGHT) or vr.height)
         pred_centers, pred_cls = keypoints_detections[frame_idx]
 
         # Prepare base frame

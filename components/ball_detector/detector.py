@@ -147,7 +147,6 @@ class WASBBallDetector:
         weights_path: str | Path | None = None,
         cfg: "AppConfig | None" = None,
         device: str | None = None,
-        step: int = 3,
     ):
         if cfg is None:
             cfg = load_default_config()
@@ -155,7 +154,7 @@ class WASBBallDetector:
         if device is None:
             device = get_device()
         self.device = device
-        self.step = step
+        self.step = max(1, int(cfg.ball_detector.step))
 
         if weights_path is None:
             from common.utils.models import get_model_paths

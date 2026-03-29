@@ -122,18 +122,18 @@ def _draw_pass_overlay(
     h, w = frame_top.shape[:2]
     active: list[PassEvent] = []
     for pe in passes:
-        if pe.frame - _PASS_FRAMES_BEFORE <= frame_id <= pe.frame + _PASS_FRAMES_AFTER:
+        if pe.frame_end - _PASS_FRAMES_BEFORE <= frame_id <= pe.frame_end + _PASS_FRAMES_AFTER:
             active.append(pe)
     if not active:
         return
     # Oldest at top of stack, newest at bottom (so when a new pass appears, older ones shift up)
-    active.sort(key=lambda p: p.frame)
+    active.sort(key=lambda p: p.frame_end)
     active = active[-_PASS_MAX_STACK:]
 
     lines: list[tuple[str, tuple[int, int, int]]] = []
     n = len(active)
     for i, pe in enumerate(active):
-        text = f"Pass {pe.from_player_id} -> {pe.to_player_id}  |  team {pe.team_id}  |  f{pe.frame}"
+        text = f"Pass {pe.from_player_id} -> {pe.to_player_id}  |  team {pe.team_id}  |  f{pe.frame_end}"
         text = text[: min(len(text), 100)]
         # Newest line (last in list) is brightest; older lines slightly dimmer
         color = _PASS_TEXT_COLOR if i == n - 1 else _PASS_TEXT_DIM

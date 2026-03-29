@@ -34,6 +34,12 @@ components/court_detector/dataset
 components/court_detector/runs
 components/court_detector/yolo_combined_data
 components/tracking/tracking
+components/shot_detector/dataset_features/
+components/shot_detector/trained_model/
+components/shot_detector/dataset/data/
+components/shot_detector/dataset/tmp/
+components/shot_detector/dataset/annotations.json
+components/shot_detector/dataset/dataset.csv
 
 # Data outputs
 data/
