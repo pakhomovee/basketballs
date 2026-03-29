@@ -278,7 +278,7 @@ class WASBBallDetector:
         return dict(sorted(out.items(), key=lambda kv: kv[0]))
 
     @torch.no_grad()
-    def detect_video(self, video_path: str | Path) -> dict[int, Ball]:
+    def detect_video(self, video: cv2.VideoCapture) -> dict[int, Ball]:
         """
         Run detection on every frame of the video.
 
@@ -289,17 +289,14 @@ class WASBBallDetector:
         score_threshold = self.cfg.ball_detector.score_threshold
         max_disp_ratio = self.cfg.ball_detector.max_disp_ratio
 
-        cap = cv2.VideoCapture(str(video_path))
-        if not cap.isOpened():
-            raise RuntimeError(f"Cannot open video: {video_path}")
+        video.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
         frames_bgr: list[np.ndarray] = []
         while True:
-            ret, frame = cap.read()
+            ret, frame = video.read()
             if not ret:
                 break
             frames_bgr.append(frame)
-        cap.release()
 
         n = len(frames_bgr)
         if n == 0:

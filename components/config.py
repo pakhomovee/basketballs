@@ -15,9 +15,10 @@ class MainConfig(BaseModel):
     output_both: str | None = None
 
     court_type: Literal["nba", "fiba"] = "nba"
-    with_pose: bool = False
+    with_pose: bool = True
     enable_smoothing: bool = True
     no_reid: bool = False
+    target_fps: int = 30
 
 
 class CourtDetectorConfig(BaseModel):

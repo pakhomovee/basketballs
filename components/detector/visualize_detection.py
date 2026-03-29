@@ -23,6 +23,7 @@ from court_detector.court_detector import CourtDetector
 from court_detector.court_constants import CourtConstants
 from common.classes import CourtType
 from ball_detector.detector import WASBBallDetector
+from video_reader import VideoReader
 
 
 def _draw_skeleton(
@@ -97,19 +98,17 @@ def video_with_ball_bbox_yolo(
         Path to the saved file.
     """
 
-    cap = cv2.VideoCapture(input_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {input_path}")
+    vr = VideoReader(input_path)
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = vr.get(cv2.CAP_PROP_FPS)
+    w = int(vr.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(vr.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(vr.get(cv2.CAP_PROP_FRAME_COUNT))
 
     detector = Detector()
-    detections = detector.detect_video(input_path)
+    detections = detector.detect_video(vr)
 
-    cap = cv2.VideoCapture(input_path)
+    vr.set(cv2.CAP_PROP_POS_FRAMES, 0)
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
     color_player = (255, 165, 0)  # BGR cyan (players without number)
@@ -128,7 +127,8 @@ def video_with_ball_bbox_yolo(
     # Homographies: frame normalized coords [0,1]^2 -> court normalized coords [-0.5,0.5]^2.
     court_constants = CourtConstants(CourtType.NBA)
     court_detector = CourtDetector()
-    homographies, _, _, _ = court_detector.extract_homographies_from_video_v2(str(input_path), court_constants)
+    homographies, _, _, _ = court_detector.extract_homographies_from_video_v2(vr, court_constants)
+    vr.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     kept_ball_by_frame = remove_bad_ball_detections(
         ball_detections,
@@ -145,7 +145,7 @@ def video_with_ball_bbox_yolo(
     font_thickness = 1
     try:
         for i in range(total_frames):
-            ret, frame = cap.read()
+            ret, frame = vr.read()
             if not ret:
                 break
 
@@ -284,7 +284,7 @@ def video_with_ball_bbox_yolo(
             # break
     finally:
         pbar2.close()
-        cap.release()
+        vr.release()
         writer.release()
 
     # print(f"[YOLO] Ball detected on {detected_count} frames, interpolated gaps, written to {output_path}")

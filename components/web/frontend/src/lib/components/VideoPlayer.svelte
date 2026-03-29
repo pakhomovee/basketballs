@@ -60,10 +60,27 @@
 		const observer = new ResizeObserver(() => updateSize());
 		observer.observe(container);
 		startFrameLoop();
+
+		function handleKeyDown(e: KeyboardEvent) {
+			const tag = (e.target as HTMLElement)?.tagName;
+			if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) {
+				return;
+			}
+			if (e.key === 'ArrowLeft') {
+				e.preventDefault();
+				stepFrame(-1);
+			} else if (e.key === 'ArrowRight') {
+				e.preventDefault();
+				stepFrame(1);
+			}
+		}
+		window.addEventListener('keydown', handleKeyDown);
+
 		return () => {
 			observer.disconnect();
 			if (rvfcHandle >= 0) (video as any).cancelVideoFrameCallback(rvfcHandle);
 			else if (animFrame) cancelAnimationFrame(animFrame);
+			window.removeEventListener('keydown', handleKeyDown);
 		};
 	});
 
@@ -157,6 +174,16 @@
 		courtTrails = newTrails;
 	}
 
+	function stepFrame(delta: number) {
+		if (!video || !fps) return;
+		video.pause();
+		playing = false;
+		const stepSeconds = 1 / fps;
+		const newTime = Math.max(0, video.currentTime + delta * stepSeconds);
+		video.currentTime = newTime;
+		courtTrails = {};
+	}
+
 	function togglePlay() {
 		if (video.paused) {
 			video.play();
@@ -246,7 +273,7 @@
 			const savedTime = video.currentTime;
 
 			for (let f = 0; f < totalFrames; f++) {
-				video.currentTime = f / exportFps;
+				video.currentTime = f / fps;
 				await new Promise<void>((r) => {
 					video.onseeked = () => r();
 				});

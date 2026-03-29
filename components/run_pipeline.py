@@ -4,8 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Any
 
-import cv2
-
 from ball_detector.detector import WASBBallDetector
 from court_detector.court_detector import CourtDetector
 from detector import Detector, enrich_detections_with_numbers, enrich_players_with_pose
@@ -18,6 +16,7 @@ from smoother import smooth_detection_coordinates
 from team_clustering.embedding import PlayerEmbedder
 from team_clustering.team_clustering import TeamClustering
 from tracking import FlowTracker
+from video_reader import VideoReader
 
 from config import AppConfig
 
@@ -37,42 +36,6 @@ class NullStageLogger:
 
     def set_stage(self, label: str, stage_idx: int) -> None:
         return
-
-
-def _get_video_fps(video_path: str) -> float:
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        return 25.0
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
-    cap.release()
-    return fps if fps > 0 else 25.0
-
-
-def _get_video_frame_width(video_path: str) -> float | None:
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        return None
-    width = float(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    cap.release()
-    return width if width > 0 else None
-
-
-def _get_video_meta(video_path: str) -> dict[str, Any]:
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        return {"fps": 25.0, "width": 0, "height": 0, "total_frames": 0, "video_name": Path(video_path).name}
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 25.0)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    cap.release()
-    return {
-        "fps": round(fps, 2),
-        "width": width,
-        "height": height,
-        "total_frames": total_frames,
-        "video_name": Path(video_path).name,
-    }
 
 
 @dataclass(frozen=True)
@@ -108,58 +71,67 @@ def run_pipeline(
     main_cfg = cfg.main
     court_type = CourtType.NBA if main_cfg.court_type == "nba" else CourtType.FIBA
 
-    stage_logger.set_stage("Detecting players…", 1)
-    detector = Detector(model_path=str(paths.detector), conf_threshold=cfg.detector.initial_threshold)
-    all_detections = detector.detect_video(video_path)
-    players_detections, referees_detections, numbers_detections = enrich_detections_with_numbers(
-        video_path,
-        all_detections,
-        player_conf_threshold=cfg.detector.player_conf_threshold,
-        referee_conf_threshold=cfg.detector.referee_conf_threshold,
-        number_conf_threshold=cfg.detector.number_conf_threshold,
-        ocr_conf_threshold=cfg.detector.ocr_conf_threshold,
-    )
+    with VideoReader(video_path, target_fps=main_cfg.target_fps) as vr:
+        video_fps = vr.fps
 
-    stage_logger.set_stage("Estimating poses…", 2)
-    if main_cfg.with_pose:
-        enrich_players_with_pose(video_path, players_detections)
+        stage_logger.set_stage("Detecting players…", 1)
+        detector = Detector(model_path=str(paths.detector), conf_threshold=cfg.detector.initial_threshold)
+        all_detections = detector.detect_video(vr)
+        players_detections, referees_detections, numbers_detections = enrich_detections_with_numbers(
+            vr,
+            all_detections,
+            player_conf_threshold=cfg.detector.player_conf_threshold,
+            referee_conf_threshold=cfg.detector.referee_conf_threshold,
+            number_conf_threshold=cfg.detector.number_conf_threshold,
+            ocr_conf_threshold=cfg.detector.ocr_conf_threshold,
+        )
 
-    stage_logger.set_stage("Detecting court…", 3)
-    court_detector = CourtDetector(model_path=str(paths.court_detection), cfg=cfg)
-    court_detector.run(video_path, players_detections)
+        stage_logger.set_stage("Estimating poses…", 2)
+        if main_cfg.with_pose:
+            enrich_players_with_pose(vr, players_detections)
 
-    stage_logger.set_stage("Detecting ball…", 4)
-    wasb_detector = WASBBallDetector(weights_path=str(paths.wasb), cfg=cfg)
-    sparse_ball = wasb_detector.detect_video(video_path)  # dict[int, Ball] (already interpolated)
-    ball_detections = {fid: [b] for fid, b in sparse_ball.items()}
+        stage_logger.set_stage("Detecting court…", 3)
+        court_detector = CourtDetector(model_path=str(paths.court_detection), cfg=cfg)
+        court_detector.run(vr, players_detections)
 
-    stage_logger.set_stage("Extracting colour embeddings & masks…", 5)
-    PlayerEmbedder(cfg=cfg).extract_player_embeddings(video_path, players_detections)
+        stage_logger.set_stage("Detecting ball…", 4)
+        wasb_detector = WASBBallDetector(weights_path=str(paths.wasb), cfg=cfg)
+        sparse_ball = wasb_detector.detect_video(vr)  # dict[int, Ball] (already interpolated)
+        sampled_frames = set(players_detections.keys())
+        ball_detections = {fid: [b] for fid, b in sparse_ball.items() if fid in sampled_frames}
 
-    stage_logger.set_stage("Extracting ReID embeddings…", 6)
-    if (not main_cfg.no_reid) and Path(paths.reid).is_file():
-        extract_reid_embeddings(video_path, players_detections, str(paths.reid), device=get_device())
+        stage_logger.set_stage("Extracting colour embeddings & masks…", 5)
+        PlayerEmbedder(cfg=cfg).extract_player_embeddings(vr, players_detections)
 
-    stage_logger.set_stage("Running tracker…", 7)
-    video_fps = _get_video_fps(video_path)
-    frame_width = _get_video_frame_width(video_path)
-    tracker = FlowTracker(cfg=cfg, frame_width=frame_width, fps=video_fps)
-    tracker.track(players_detections)
+        stage_logger.set_stage("Extracting ReID embeddings…", 6)
+        if (not main_cfg.no_reid) and Path(paths.reid).is_file():
+            extract_reid_embeddings(vr, players_detections, str(paths.reid), device=get_device())
 
-    stage_logger.set_stage("Clustering teams…", 8)
-    team_clustering = TeamClustering(cfg=cfg)
-    team_clustering.run(players_detections)
+        stage_logger.set_stage("Running tracker…", 7)
+        tracker = FlowTracker(cfg=cfg, frame_width=float(vr.width), fps=video_fps)
+        tracker.track(players_detections)
 
-    stage_logger.set_stage("Possession & smoothing…", 9)
-    ball_possession = BallPossession()
-    ball_possession.run(players_detections, ball_detections, fps=video_fps)
-    possession_segments = ball_possession.segments
-    pass_events = ball_possession.pass_events
+        stage_logger.set_stage("Clustering teams…", 8)
+        team_clustering = TeamClustering(cfg=cfg)
+        team_clustering.run(players_detections)
 
-    if main_cfg.enable_smoothing:
-        smooth_detection_coordinates(players_detections, cfg=cfg)
+        stage_logger.set_stage("Possession & smoothing…", 9)
+        ball_possession = BallPossession()
+        ball_possession.run(players_detections, ball_detections, fps=video_fps)
+        possession_segments = ball_possession.segments
+        pass_events = ball_possession.pass_events
 
-    video_meta = _get_video_meta(video_path)
+        if main_cfg.enable_smoothing:
+            smooth_detection_coordinates(players_detections, cfg=cfg)
+
+        video_meta = {
+            "fps": round(video_fps, 2),
+            "width": vr.width,
+            "height": vr.height,
+            "total_frames": vr.total_frames,
+            "video_name": Path(video_path).name,
+        }
+
     stage_logger.set_stage("Done", TOTAL_STAGES)
     return PipelineResult(
         players_detections=players_detections,
@@ -168,6 +140,6 @@ def run_pipeline(
         pass_events=pass_events,
         court_type=court_type,
         video_fps=video_fps,
-        frame_width=frame_width,
+        frame_width=video_meta["width"],
         video_meta=video_meta,
     )

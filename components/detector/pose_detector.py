@@ -293,15 +293,16 @@ def write_video_with_player_poses(
     This produces poses for players only and reduces pose-model work on background regions.
     """
     # 1) Get player detections for the whole video
-    det = Detector()
-    video_detections = det.detect_video(input_video_path)
-    players_detections = get_video_players_detections(video_detections, conf_threshold=player_conf_threshold)
-
-    # 2) Prepare video I/O
     cap = cv2.VideoCapture(input_video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {input_video_path}")
 
+    det = Detector()
+    video_detections = det.detect_video(cap)
+    players_detections = get_video_players_detections(video_detections, conf_threshold=player_conf_threshold)
+
+    # 2) Prepare video I/O
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -425,17 +426,18 @@ def write_video_with_ball_handler_poses(
     to the center of the ball bbox.
     """
     # 1) Player/ball detections for the whole video
+    cap = cv2.VideoCapture(input_video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open video: {input_video_path}")
+
     det = Detector()
-    video_detections = det.detect_video(input_video_path)
+    video_detections = det.detect_video(cap)
     players_detections = get_video_players_detections(video_detections, conf_threshold=player_conf_threshold)
     ball_detections = get_video_ball_detections(video_detections)
     rim_detections = get_video_rim_detections(video_detections, conf_threshold=0.1)
 
     # 2) Prepare video I/O
-    cap = cv2.VideoCapture(input_video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {input_video_path}")
-
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))

@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 
+from video_reader import VideoReader
+
 from common.logger import get_logger
 from common.classes.pass_event import PassEvent
 from visualization.skeleton import draw_skeleton
@@ -197,8 +199,8 @@ def make_side_by_side_video(
     """
     print("Writing side by side (top / bottom)" + (" + logs" if show_logs else ""))
 
-    cap_top = cv2.VideoCapture(top_video_path)
-    cap_bottom = cv2.VideoCapture(bottom_video_path)
+    cap_top = VideoReader(top_video_path)
+    cap_bottom = VideoReader(bottom_video_path)
 
     if not cap_top.isOpened():
         raise RuntimeError(f"Cannot open top video: {top_video_path}")

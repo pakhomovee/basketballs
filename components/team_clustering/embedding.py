@@ -118,15 +118,12 @@ class PlayerEmbedder:
         variance = float(np.average((values - mean) ** 2, weights=weights))
         return mean, variance**0.5
 
-    def extract_player_embeddings(self, video_path: str, detections: PlayersDetections) -> None:
+    def extract_player_embeddings(self, video: cv2.VideoCapture, detections: PlayersDetections) -> None:
         """Populate player embeddings using full-frame segmentation masks."""
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            raise RuntimeError(f"Cannot open video: {video_path}")
-
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
         for frame_id in tqdm(range(total_frames), desc="Extracting embeddings"):
-            ret, frame = cap.read()
+            ret, frame = video.read()
             if not ret:
                 break
             frame_entries = self._collect_player_crops(frame, detections.get(frame_id, []))
@@ -138,8 +135,6 @@ class PlayerEmbedder:
                 player.embedding = self.extract_embedding(crop, mask).astype(np.float32)
                 if polygon is not None:
                     player.mask_polygon = polygon.tolist()
-
-        cap.release()
 
     def _fallback_mask(self, crop: np.ndarray) -> np.ndarray:
         height, width = crop.shape[:2]

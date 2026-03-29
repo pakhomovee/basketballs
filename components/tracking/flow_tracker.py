@@ -86,8 +86,10 @@ class FlowTracker:
         ``x2`` over all detections. Used for out-of-frame handling (players
         near the left/right edge).
     fps : float, optional
-        Video frame rate. Not part of ``cfg.tracker``; supply from the input
-        video (e.g. computed in the pipeline ``main``).
+        Video frame rate. Used to scale pixel-distance thresholds (``bbox_scale``
+        and ``occlusion_gate``) which are tuned for 30 fps.  At a different rate
+        the thresholds are multiplied by ``30 / fps`` so that the spatial costs
+        remain consistent regardless of frame rate.
 
     Fields in ``cfg.tracker``
     -------------------------
@@ -97,9 +99,10 @@ class FlowTracker:
         Maximum frame gap for a direct link between two detections. Larger
         gaps cannot be bridged by a single edge (the track must end/restart).
     bbox_scale : float
-        Pixel scale for exponential spatial cost:
+        Pixel scale for exponential spatial cost at 30 fps:
         ``cost ≈ exp(px_dist / (bbox_scale * sqrt(frame_gap))) - 1``. There is
         no hard distance gate; very long jumps are discouraged exponentially.
+        Scaled by ``30 / fps`` at runtime.
     w_spatial, w_app, w_iou : float
         Weights for spatial, appearance (ReID / embedding), and IoU link costs.
     w_extended : float
@@ -159,7 +162,6 @@ class FlowTracker:
 
         self.num_tracks = tracker_cfg.num_tracks
         self.max_skip = tracker_cfg.max_skip
-        self.bbox_scale = tracker_cfg.bbox_scale
         self.w_spatial = tracker_cfg.w_spatial
         self.start_w_app = tracker_cfg.w_app
         self.w_app = self.start_w_app
@@ -171,6 +173,14 @@ class FlowTracker:
         self.exit_cost = tracker_cfg.exit_cost
         self.fps = fps
         self.frame_width = frame_width
+
+        # bbox_scale and occlusion_gate are tuned for 30 fps (pixels per frame
+        # at that rate).  Scale them linearly so spatial costs stay consistent
+        # at any frame rate: fewer pixels per frame at higher fps → smaller scale.
+        _fps_factor = 30.0 / fps
+        self.bbox_scale = tracker_cfg.bbox_scale * _fps_factor
+        self.occlusion_gate = tracker_cfg.occlusion_gate * _fps_factor
+
         self.edge_margin = tracker_cfg.edge_margin
         self.k_warmup_frames = tracker_cfg.k_warmup_frames
         self.last_frames = tracker_cfg.last_frames
@@ -179,7 +189,6 @@ class FlowTracker:
         self.oof_entry_cost = tracker_cfg.oof_entry_cost
         self.w_color = tracker_cfg.w_color
         self.max_occlusion = tracker_cfg.max_occlusion
-        self.occlusion_gate = tracker_cfg.occlusion_gate
         self.occlusion_penalty = tracker_cfg.occlusion_penalty
         self.occlusion_start_pass = tracker_cfg.occlusion_start_pass
 

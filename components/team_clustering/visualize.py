@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from tqdm.auto import tqdm
 
+from video_reader import VideoReader
+
 from common.classes import PlayersDetections
 from common.utils.utils import get_device
 from team_clustering.embedding import PlayerEmbedder
@@ -26,7 +28,7 @@ MaskSample = tuple[np.ndarray, tuple[int, int, int, int], np.ndarray, np.ndarray
 
 def render_clustered_video(video_path: str, detections: PlayersDetections, output_path: str):
     """Write a new video with bounding boxes coloured by team assignment."""
-    cap = cv2.VideoCapture(video_path)
+    cap = VideoReader(video_path)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -166,7 +168,7 @@ def collect_video_mask_samples(
     seg_model = str(resolve_repo_path(seg_model))
     embedder = PlayerEmbedder(seg_model, device=get_device())
 
-    cap = cv2.VideoCapture(video_path)
+    cap = VideoReader(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
 
