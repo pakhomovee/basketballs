@@ -97,7 +97,7 @@ class VideoReader:
         candidates = [lo]
         if lo + 1 < T:
             candidates.append(lo + 1)
-        return min(candidates, key=lambda l: (abs(self.physical_frame_for(l) - p), l))
+        return min(candidates, key=lambda x: (abs(self.physical_frame_for(x) - p), x))
 
     def read(self) -> tuple[bool, np.ndarray | None]:
         """cv2.VideoCapture-compatible ``read()``."""

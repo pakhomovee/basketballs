@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run backend + frontend locally without Docker.
-# Usage: ./dev.sh [--port-backend 8000] [--port-frontend 5173] [--view-only]
+# Usage: ./dev.sh [--port 5173] [--port-backend 8000] [--port-frontend 5173] [--view-only]
+#   --port is shorthand for --port-frontend (last of --port / --port-frontend wins).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -11,6 +12,10 @@ VIEW_ONLY=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
+    --port)
+      FRONTEND_PORT="$2"
+      shift 2
+      ;;
     --port-backend) BACKEND_PORT="$2"; shift 2 ;;
     --port-frontend) FRONTEND_PORT="$2"; shift 2 ;;
     --view-only) VIEW_ONLY=true; shift ;;

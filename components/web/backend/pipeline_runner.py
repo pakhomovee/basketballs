@@ -71,6 +71,7 @@ def _run_pipeline(job_id: str, video_path: str) -> None:
         result.ball_detections,
         result.video_meta,
         pass_events=result.pass_events,
+        shot_events=result.shot_events,
     )
     save_annotations(annotation_data, job_dir(job_id) / "annotations.json")
     stage_logger.set_stage("Done", total_stages)

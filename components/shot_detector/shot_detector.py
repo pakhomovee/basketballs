@@ -5,7 +5,7 @@ Shot detector: MS-TCN-based frame-level classification of
 Provides:
   - :class:`ShotDetector`  – loads a single ``.pt`` checkpoint (``meta`` + ``state_dict``),
     uses ``AppConfig`` (``cfg.main.court_type``); primary API is
-    :meth:`~ShotDetector.predict_from_detections`.
+    :meth:`~ShotDetector.predict_from_detections`, :meth:`~ShotDetector.predict_events`.
   - :func:`ms_tcn_loss`    – combined CE + truncated-MSE smoothing loss
   - :func:`train`          – full training pipeline (CLI-runnable)
 """
@@ -23,7 +23,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, Subset
 
-from common.classes import CourtType
+from common.classes import CourtType, ShotEvent
 from common.classes.ball import Ball
 from common.classes.detections import Detection
 from common.utils.models import get_model_paths
@@ -43,6 +43,61 @@ log = logging.getLogger(__name__)
 
 SHOT_CHECKPOINT_FILENAME = "shot_detection_model.pt"
 SHOT_META_KEYS = ("input_dim", "n_classes", "n_stages", "n_filters", "n_layers")
+
+# Per-frame labels (same as dataset)
+LABEL_NOTHING = 0
+LABEL_SHOT = 1
+LABEL_MAKE = 2
+
+
+def shot_events_from_frame_labels(labels: np.ndarray) -> list[ShotEvent]:
+    """
+    Group consecutive frames with class *shot* or *make* into :class:`ShotEvent` instances.
+
+    Parameters
+    ----------
+    labels
+        Shape ``(T,)``, values ``{0, 1, 2}`` — nothing / shot / make.
+    """
+    y = np.asarray(labels, dtype=np.int64).ravel()
+    T = int(y.size)
+    out: list[ShotEvent] = []
+    i = 0
+    while i < T:
+        c = int(y[i])
+        if c not in (LABEL_SHOT, LABEL_MAKE):
+            i += 1
+            continue
+        start = i
+        i += 1
+        while i < T and int(y[i]) in (LABEL_SHOT, LABEL_MAKE):
+            i += 1
+        end = i - 1
+        seg = y[start : end + 1]
+        make_rel = np.flatnonzero(seg == LABEL_MAKE)
+        if make_rel.size > 0:
+            ms = start + int(make_rel.min())
+            me = start + int(make_rel.max())
+            out.append(
+                ShotEvent(
+                    frame_start=start,
+                    frame_end=end,
+                    is_make=True,
+                    make_start=ms,
+                    make_end=me,
+                )
+            )
+        else:
+            out.append(
+                ShotEvent(
+                    frame_start=start,
+                    frame_end=end,
+                    is_make=False,
+                    make_start=None,
+                    make_end=None,
+                )
+            )
+    return sorted(out, key=lambda e: e.frame_start)
 
 
 def _shot_meta_dict(
@@ -89,6 +144,7 @@ def load_shot_checkpoint(path: str | Path) -> tuple[dict[str, int], dict]:
 # ---------------------------------------------------------------------------
 # Loss
 # ---------------------------------------------------------------------------
+
 
 def ms_tcn_loss(
     stage_outputs: list[torch.Tensor],
@@ -140,6 +196,7 @@ def ms_tcn_loss(
 # ---------------------------------------------------------------------------
 # ShotDetector (inference)
 # ---------------------------------------------------------------------------
+
 
 class ShotDetector:
     """MS-TCN shot / make segmentation from ball, rim, and homography inputs.
@@ -219,6 +276,39 @@ class ShotDetector:
         return self._forward_embedding(embedding)
 
     @torch.no_grad()
+    def predict_events(
+        self,
+        ball_detections: dict[int, Ball | list[Ball]],
+        rim_detections: dict[int, list[Detection]],
+        homographies: list[np.ndarray | None] | dict[int, np.ndarray | None],
+        *,
+        frame_width: float,
+        frame_height: float,
+        num_frames: int | None = None,
+    ) -> list[ShotEvent]:
+        """
+        Same inputs as :meth:`predict_from_detections`; returns merged *shot* / *make* segments.
+
+        A :class:`~common.classes.shot_event.ShotEvent` is a maximal contiguous run of frames
+        labeled *shot* (1) or *make* (2). If any frame in the run is *make*, ``is_make`` is
+        True and ``make_start`` / ``make_end`` span all *make* frames in that run (inclusive).
+
+        Returns
+        -------
+        list[ShotEvent]
+            Sorted by ``frame_start`` ascending.
+        """
+        labels = self.predict_from_detections(
+            ball_detections,
+            rim_detections,
+            homographies,
+            frame_width=frame_width,
+            frame_height=frame_height,
+            num_frames=num_frames,
+        )
+        return shot_events_from_frame_labels(labels)
+
+    @torch.no_grad()
     def predict_embedding(self, embedding: np.ndarray) -> np.ndarray:
         """Predict from an already-built ``(T, 112)`` embedding (e.g. tests / pipelines)."""
         return self._forward_embedding(embedding)
@@ -227,6 +317,7 @@ class ShotDetector:
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
+
 
 def _compute_class_weights(dataset: ShotDataset) -> torch.Tensor:
     """Inverse-frequency class weights computed over the full dataset."""
@@ -264,8 +355,12 @@ def _evaluate(
 
         outputs = model(features, mask)
         loss = ms_tcn_loss(
-            outputs, labels, mask,
-            class_weights=class_weights, lambda_smooth=lambda_smooth, tau=tau,
+            outputs,
+            labels,
+            mask,
+            class_weights=class_weights,
+            lambda_smooth=lambda_smooth,
+            tau=tau,
         )
         total_loss += loss.item()
 
@@ -281,7 +376,9 @@ def _evaluate(
 
     n_batches = max(len(loader), 1)
     per_class_acc = np.where(
-        per_class_total > 0, per_class_correct / per_class_total, 0.0,
+        per_class_total > 0,
+        per_class_correct / per_class_total,
+        0.0,
     )
     return {
         "loss": total_loss / n_batches,
@@ -340,9 +437,12 @@ def train(
 
     # ---- datasets ----
     train_ds = ShotDataset(
-        features_dir, court_type=ct,
-        fliplr=fliplr, random_scale=random_scale,
-        random_shift=random_shift, random_rotate=random_rotate,
+        features_dir,
+        court_type=ct,
+        fliplr=fliplr,
+        random_scale=random_scale,
+        random_shift=random_shift,
+        random_rotate=random_rotate,
         skip_prob=skip_prob,
         random_crop_ratio=random_crop_ratio,
     )
@@ -363,17 +463,31 @@ def train(
 
     if max_stack < 1:
         raise ValueError("max_stack must be >= 1")
-    train_loader_ds: Dataset = (
-        StackedShotDataset(train_subset, max_stack) if max_stack >= 2 else train_subset
-    )
+    train_loader_ds: Dataset = StackedShotDataset(train_subset, max_stack) if max_stack >= 2 else train_subset
     log.info(
         "Train: %s (max_stack=%d); val: single clips",
         f"1..{max_stack} clips concatenated" if max_stack >= 2 else "one clip per sample",
         max_stack,
     )
 
-    train_loader = DataLoader(train_loader_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=num_workers, persistent_workers=num_workers > 0, pin_memory=True)
-    val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=num_workers, persistent_workers=num_workers > 0, pin_memory=True)
+    train_loader = DataLoader(
+        train_loader_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=collate_fn,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
+        pin_memory=True,
+    )
+    val_loader = DataLoader(
+        val_subset,
+        batch_size=batch_size,
+        shuffle=False,
+        collate_fn=collate_fn,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
+        pin_memory=True,
+    )
 
     # ---- class weights (full timeline; skip_prob would bias frequencies) ----
     log.info("Computing class weights …")
@@ -425,8 +539,12 @@ def train(
             optimizer.zero_grad()
             outputs = model(features, mask)
             loss = ms_tcn_loss(
-                outputs, labels, mask,
-                class_weights=class_weights, lambda_smooth=lambda_smooth, tau=tau,
+                outputs,
+                labels,
+                mask,
+                class_weights=class_weights,
+                lambda_smooth=lambda_smooth,
+                tau=tau,
             )
             loss.backward()
             optimizer.step()
@@ -449,23 +567,33 @@ def train(
 
         cur_lr = optimizer.param_groups[0]["lr"]
         log.info(
-            "Epoch %3d/%d  lr=%.2e  train_loss=%.4f  val_loss=%.4f  val_acc=%.3f  "
-            "bg=%.3f shot=%.3f make=%.3f%s",
-            epoch, num_epochs, cur_lr, train_loss, val_loss, val_acc,
-            pca[0], pca[1], pca[2],
+            "Epoch %3d/%d  lr=%.2e  train_loss=%.4f  val_loss=%.4f  val_acc=%.3f  bg=%.3f shot=%.3f make=%.3f%s",
+            epoch,
+            num_epochs,
+            cur_lr,
+            train_loss,
+            val_loss,
+            val_acc,
+            pca[0],
+            pca[1],
+            pca[2],
             " *" if improved else "",
         )
 
-        history.append({
-            "epoch": epoch,
-            "train_loss": train_loss,
-            "val_loss": val_loss,
-            "val_accuracy": val_acc,
-            "per_class_acc": pca.tolist(),
-        })
+        history.append(
+            {
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "val_loss": val_loss,
+                "val_accuracy": val_acc,
+                "per_class_acc": pca.tolist(),
+            }
+        )
 
     checkpoint_path = output_dir / SHOT_CHECKPOINT_FILENAME
-    state_to_save = best_state if best_state is not None else {k: v.detach().cpu() for k, v in model.state_dict().items()}
+    state_to_save = (
+        best_state if best_state is not None else {k: v.detach().cpu() for k, v in model.state_dict().items()}
+    )
     meta_pt = _shot_meta_dict(input_dim, NUM_CLASSES, n_stages, n_filters, n_layers)
     save_shot_checkpoint(checkpoint_path, meta_pt, state_to_save)
 
@@ -485,6 +613,7 @@ def train(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def _parse_args():
     import argparse

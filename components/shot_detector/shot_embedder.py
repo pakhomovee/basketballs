@@ -126,7 +126,9 @@ class ShotEmbedder:
         return kp
 
     @staticmethod
-    def _apply_affine_to_points(points_xy: np.ndarray, scale: float, tx: float, ty: float, angle_rad: float) -> np.ndarray:
+    def _apply_affine_to_points(
+        points_xy: np.ndarray, scale: float, tx: float, ty: float, angle_rad: float
+    ) -> np.ndarray:
         """
         Apply geometric augmentation in normalized coordinates.
         Transform is applied around frame center (0.5, 0.5):
@@ -278,12 +280,18 @@ class ShotEmbedder:
         np.ndarray
             Shape (T, FLAT_DIM), where FLAT_DIM = 112.
         """
+
+        def h_get(i: int) -> np.ndarray | None:
+            if isinstance(homographies, dict):
+                return homographies.get(i)
+            if 0 <= i < len(homographies):
+                return homographies[i]
+            return None
+
         if isinstance(homographies, dict):
             max_h_idx = max(homographies.keys(), default=-1)
-            h_get = lambda i: homographies.get(i)
         else:
             max_h_idx = len(homographies) - 1
-            h_get = lambda i: homographies[i] if 0 <= i < len(homographies) else None
 
         max_ball_idx = max(ball_detections.keys(), default=-1)
         max_rim_idx = max(rim_detections.keys(), default=-1)
@@ -343,4 +351,3 @@ class ShotEmbedder:
             axis=1,
         ).astype(np.float32)
         return flat
-

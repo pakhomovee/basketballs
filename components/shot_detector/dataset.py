@@ -85,7 +85,9 @@ def _reconstruct_from_npz(
             rim_detections[f] = [d]
 
     if "frame_w" not in data or "frame_h" not in data:
-        raise KeyError("npz must contain 'frame_w' and 'frame_h' (rebuild features with current build_training_dataset)")
+        raise KeyError(
+            "npz must contain 'frame_w' and 'frame_h' (rebuild features with current build_training_dataset)"
+        )
     fw = int(data["frame_w"])
     fh = int(data["frame_h"])
 
@@ -212,8 +214,8 @@ class ShotDataset(Dataset):
             T = int(embedding.shape[0])
 
         return (
-            torch.from_numpy(embedding),       # (T', 112)
-            torch.from_numpy(labels),           # (T',)
+            torch.from_numpy(embedding),  # (T', 112)
+            torch.from_numpy(labels),  # (T',)
             T,
         )
 
@@ -228,7 +230,9 @@ class StackedShotDataset(Dataset):
 
     def __init__(self, base: Dataset, max_stack: int):
         if max_stack < 2:
-            raise ValueError("StackedShotDataset expects max_stack >= 2; use the base dataset directly for max_stack == 1")
+            raise ValueError(
+                "StackedShotDataset expects max_stack >= 2; use the base dataset directly for max_stack == 1"
+            )
         self.base = base
         self.max_stack = max_stack
 
@@ -244,9 +248,9 @@ class StackedShotDataset(Dataset):
         feats = [f0]
         labs = [l0]
         for j in picks[1:]:
-            f, l, _ = self.base[j]
-            feats.append(f)
-            labs.append(l)
+            feat, lab, _ = self.base[j]
+            feats.append(feat)
+            labs.append(lab)
         feat = torch.cat(feats, dim=0)
         lab = torch.cat(labs, dim=0)
         return feat, lab, int(feat.shape[0])

@@ -359,9 +359,7 @@ def run_annotation_tool(
             if prev_path in saved:
                 prev_ann = _annotation_from_record(saved[prev_path])
                 print(f"\nBack to ({i + 1}/{len(unannotated)}): {prev_path}")
-                action2, edited = _annotate_single_clip(
-                    dataset_dir / prev_path, prev_ann, target_fps=target_fps
-                )
+                action2, edited = _annotate_single_clip(dataset_dir / prev_path, prev_ann, target_fps=target_fps)
                 if action2 == "save":
                     saved[prev_path] = asdict(edited)
                     _save_annotations(annotations_path, saved)
@@ -414,4 +412,3 @@ if __name__ == "__main__":
         seed=args.seed,
         cfg=cfg,
     )
-

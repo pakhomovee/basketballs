@@ -20,7 +20,11 @@ class DilatedResidualLayer(nn.Module):
     def __init__(self, dilation: int, n_filters: int, dropout: float = 0.5):
         super().__init__()
         self.conv_dilated = nn.Conv1d(
-            n_filters, n_filters, kernel_size=3, padding=dilation, dilation=dilation,
+            n_filters,
+            n_filters,
+            kernel_size=3,
+            padding=dilation,
+            dilation=dilation,
         )
         self.conv_1x1 = nn.Conv1d(n_filters, n_filters, kernel_size=1)
         self.dropout = nn.Dropout(dropout)
@@ -43,9 +47,7 @@ class SingleStageTCN(nn.Module):
     ):
         super().__init__()
         self.conv_in = nn.Conv1d(input_dim, n_filters, kernel_size=1)
-        self.layers = nn.ModuleList(
-            [DilatedResidualLayer(2**i, n_filters, dropout=dropout) for i in range(n_layers)]
-        )
+        self.layers = nn.ModuleList([DilatedResidualLayer(2**i, n_filters, dropout=dropout) for i in range(n_layers)])
         self.conv_out = nn.Conv1d(n_filters, n_classes, kernel_size=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -93,7 +95,9 @@ class MultiStageTCN(nn.Module):
             self.stages.append(SingleStageTCN(n_classes, n_classes, n_filters, n_layers, dropout))
 
     def forward(
-        self, x: torch.Tensor, mask: torch.Tensor | None = None,
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor | None = None,
     ) -> list[torch.Tensor]:
         """
         Parameters

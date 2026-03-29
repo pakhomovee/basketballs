@@ -6,9 +6,9 @@ from typing import Protocol, Any
 
 from ball_detector.detector import WASBBallDetector
 from court_detector.court_detector import CourtDetector
-from detector import Detector, enrich_detections_with_numbers, enrich_players_with_pose
+from detector import Detector, enrich_detections_with_numbers, enrich_players_with_pose, get_video_rim_detections
 from actions.ball_possession import BallPossession
-from common.classes import CourtType
+from common.classes import CourtType, ShotEvent
 from common.utils.models import ensure_models, get_model_paths
 from common.utils.utils import get_device
 from reidentification import extract_reid_embeddings
@@ -17,11 +17,12 @@ from team_clustering.embedding import PlayerEmbedder
 from team_clustering.team_clustering import TeamClustering
 from tracking import FlowTracker
 from video_reader import VideoReader
+from shot_detector.shot_detector import ShotDetector
 
 from config import AppConfig
 
 
-TOTAL_STAGES = 10
+TOTAL_STAGES = 11
 
 
 class StageLogger(Protocol):
@@ -44,6 +45,7 @@ class PipelineResult:
     ball_detections: dict[int, list[Any]]
     possession_segments: Any
     pass_events: Any
+    shot_events: list[ShotEvent]
     court_type: CourtType
     video_fps: float
     frame_width: float | None
@@ -92,7 +94,7 @@ def run_pipeline(
 
         stage_logger.set_stage("Detecting court…", 3)
         court_detector = CourtDetector(model_path=str(paths.court_detection), cfg=cfg)
-        court_detector.run(vr, players_detections)
+        homographies = court_detector.run(vr, players_detections)
 
         stage_logger.set_stage("Detecting ball…", 4)
         wasb_detector = WASBBallDetector(weights_path=str(paths.wasb), cfg=cfg)
@@ -100,22 +102,34 @@ def run_pipeline(
         sampled_frames = set(players_detections.keys())
         ball_detections = {fid: [b] for fid, b in sparse_ball.items() if fid in sampled_frames}
 
-        stage_logger.set_stage("Extracting colour embeddings & masks…", 5)
+        stage_logger.set_stage("Detecting shots…", 5)
+        rim_by_frame = get_video_rim_detections(all_detections, conf_threshold=cfg.detector.initial_threshold)
+        shot_detector = ShotDetector(cfg=cfg)
+        shot_events = shot_detector.predict_events(
+            sparse_ball,
+            rim_by_frame,
+            homographies,
+            frame_width=float(vr.width),
+            frame_height=float(vr.height),
+            num_frames=vr.total_frames,
+        )
+
+        stage_logger.set_stage("Extracting colour embeddings & masks…", 6)
         PlayerEmbedder(cfg=cfg).extract_player_embeddings(vr, players_detections)
 
-        stage_logger.set_stage("Extracting ReID embeddings…", 6)
+        stage_logger.set_stage("Extracting ReID embeddings…", 7)
         if (not main_cfg.no_reid) and Path(paths.reid).is_file():
             extract_reid_embeddings(vr, players_detections, str(paths.reid), device=get_device())
 
-        stage_logger.set_stage("Running tracker…", 7)
+        stage_logger.set_stage("Running tracker…", 8)
         tracker = FlowTracker(cfg=cfg, frame_width=float(vr.width), fps=video_fps)
         tracker.track(players_detections)
 
-        stage_logger.set_stage("Clustering teams…", 8)
+        stage_logger.set_stage("Clustering teams…", 9)
         team_clustering = TeamClustering(cfg=cfg)
         team_clustering.run(players_detections)
 
-        stage_logger.set_stage("Possession & smoothing…", 9)
+        stage_logger.set_stage("Possession & smoothing…", 10)
         ball_possession = BallPossession()
         ball_possession.run(players_detections, ball_detections, fps=video_fps)
         possession_segments = ball_possession.segments
@@ -138,6 +152,7 @@ def run_pipeline(
         ball_detections=ball_detections,
         possession_segments=possession_segments,
         pass_events=pass_events,
+        shot_events=shot_events,
         court_type=court_type,
         video_fps=video_fps,
         frame_width=video_meta["width"],

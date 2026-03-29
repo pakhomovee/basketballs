@@ -10,6 +10,7 @@ import numpy as np
 from common.classes.player import Player, PlayersDetections
 from common.classes.ball import Ball, BallDetections
 from common.classes.pass_event import PassEvent
+from common.classes.shot_event import ShotEvent
 from common.distances import cosine_dist
 
 
@@ -102,13 +103,36 @@ def _compute_cross_frame_reid_matrix(
 
 def _serialize_pass_event(event: PassEvent, fps: float) -> dict:
     return {
-        "frame": event.frame,
-        "from_frame": event.from_frame,
+        "frame_start": event.frame_start,
+        "frame_end": event.frame_end,
         "from_player_id": event.from_player_id,
         "to_player_id": event.to_player_id,
         "team_id": event.team_id,
-        "timestamp_sec": round(event.frame / fps, 2) if fps > 0 else 0,
+        "timestamp_sec": round(event.frame_end / fps, 2) if fps > 0 else 0,
     }
+
+
+def _serialize_shot_event(event: ShotEvent, fps: float) -> dict:
+    ts_start = round(event.frame_start / fps, 2) if fps > 0 else 0.0
+    ts_end = round(event.frame_end / fps, 2) if fps > 0 else 0.0
+    out: dict = {
+        "frame_start": event.frame_start,
+        "frame_end": event.frame_end,
+        "is_make": event.is_make,
+        "timestamp_start_sec": ts_start,
+        "timestamp_end_sec": ts_end,
+    }
+    if event.is_make and event.make_start is not None and event.make_end is not None:
+        out["make_start"] = event.make_start
+        out["make_end"] = event.make_end
+        out["make_timestamp_start_sec"] = round(event.make_start / fps, 2) if fps > 0 else 0.0
+        out["make_timestamp_end_sec"] = round(event.make_end / fps, 2) if fps > 0 else 0.0
+    else:
+        out["make_start"] = None
+        out["make_end"] = None
+        out["make_timestamp_start_sec"] = None
+        out["make_timestamp_end_sec"] = None
+    return out
 
 
 def export_annotations(
@@ -116,6 +140,7 @@ def export_annotations(
     ball_detections: BallDetections | None,
     video_meta: dict,
     pass_events: list[PassEvent] | None = None,
+    shot_events: list[ShotEvent] | None = None,
 ) -> dict:
     """Build a complete annotation dict ready for JSON serialization."""
     all_frame_ids = sorted(set(players_detections.keys()) | set((ball_detections or {}).keys()))
@@ -138,8 +163,14 @@ def export_annotations(
 
     fps = video_meta.get("fps", 25.0)
     serialized_passes = [_serialize_pass_event(e, fps) for e in (pass_events or [])]
+    serialized_shots = [_serialize_shot_event(e, fps) for e in (shot_events or [])]
 
-    return {"metadata": video_meta, "frames": frames, "pass_events": serialized_passes}
+    return {
+        "metadata": video_meta,
+        "frames": frames,
+        "pass_events": serialized_passes,
+        "shot_events": serialized_shots,
+    }
 
 
 def save_annotations(data: dict, path: str | Path) -> None:

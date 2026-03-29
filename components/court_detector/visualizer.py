@@ -463,9 +463,7 @@ def run_video(args):
     # )
 
     vr = VideoReader(str(args.video))
-    homographies, keypoints_detections, losses = detector.extract_homographies_from_video_v2(
-        vr, court_constants
-    )
+    homographies, keypoints_detections, losses = detector.extract_homographies_from_video_v2(vr, court_constants)
     # losses = None
 
     # Rewind for visualization
