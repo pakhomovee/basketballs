@@ -125,7 +125,7 @@ class ModelConfig(BaseModel):
     wasb_url: str = "https://disk.yandex.ru/d/JZQN5HEOKOegog"
 
     shot_detection_filename: str = "shot_detection_model.pt"
-    shot_detection_url: str = "https://disk.yandex.ru/d/0_D7TINKaNpM7A"
+    shot_detection_url: str = "https://disk.yandex.ru/d/h2kTEC7_I7WsQg"
 
 
 class BenchmarkDataset(BaseModel):
