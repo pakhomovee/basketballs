@@ -55,7 +55,8 @@ def _reconstruct_from_npz(
     dict[int, Ball],
     dict[int, list[Detection]],
     dict[int, np.ndarray | None],
-    list[tuple[int, int]] | None,
+    int,
+    int,
     int,
 ]:
     T = int(data["frame_count"])
@@ -83,12 +84,12 @@ def _reconstruct_from_npz(
             d = Detection(x1, y1, x2, y2, class_id=0, confidence=float(rim_conf_arr[f]))
             rim_detections[f] = [d]
 
-    frame_sizes: list[tuple[int, int]] | None = None
-    if "frame_w" in data and "frame_h" in data:
-        fw, fh = int(data["frame_w"]), int(data["frame_h"])
-        frame_sizes = [(fw, fh)] * T
+    if "frame_w" not in data or "frame_h" not in data:
+        raise KeyError("npz must contain 'frame_w' and 'frame_h' (rebuild features with current build_training_dataset)")
+    fw = int(data["frame_w"])
+    fh = int(data["frame_h"])
 
-    return ball_detections, rim_detections, homographies, frame_sizes, T
+    return ball_detections, rim_detections, homographies, fw, fh, T
 
 
 class ShotDataset(Dataset):
@@ -163,13 +164,14 @@ class ShotDataset(Dataset):
         rec = self.samples[idx]
         data = np.load(rec["sample_path_abs"], allow_pickle=False)
 
-        ball_dets, rim_dets, homos, frame_sizes, T = _reconstruct_from_npz(data)
+        ball_dets, rim_dets, homos, fw, fh, T = _reconstruct_from_npz(data)
 
         embedding = self.embedder.build_embedding(
             ball_dets,
             rim_dets,
             homos,
-            frame_sizes=frame_sizes,
+            frame_width=float(fw),
+            frame_height=float(fh),
             num_frames=T,
         )  # (T, FLAT_DIM)
 

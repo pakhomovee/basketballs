@@ -44,14 +44,14 @@ def _overlay_heatmap_on_frame(
 def visualize_heatmaps(
     input_path: str | Path,
     output_path: str | Path,
-    step: int = 3,
     alpha: float = 0.45,
 ) -> None:
     input_path = Path(input_path)
     output_path = Path(output_path)
 
     cfg = load_default_config()
-    detector = WASBBallDetector(cfg=cfg, step=step)
+    detector = WASBBallDetector(cfg=cfg)
+    step = detector.step
 
     cap = cv2.VideoCapture(str(input_path))
     if not cap.isOpened():
@@ -110,11 +110,10 @@ def _parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("input_path", help="Path to input video")
     p.add_argument("output_path", help="Path to output video")
-    p.add_argument("--step", type=int, default=3, help="Triplet stride for heatmap inference")
     p.add_argument("--alpha", type=float, default=0.45, help="Heatmap overlay alpha")
     return p.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
-    visualize_heatmaps(args.input_path, args.output_path, step=args.step, alpha=args.alpha)
+    visualize_heatmaps(args.input_path, args.output_path, alpha=args.alpha)

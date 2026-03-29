@@ -52,49 +52,6 @@ class ShotEmbedder:
         return float(v[0] / v[2]), float(v[1] / v[2])
 
     @staticmethod
-    def _frame_size_for(
-        frame_id: int,
-        frame_sizes: dict[int, tuple[int, int]] | list[tuple[int, int]] | None,
-        default_w: float,
-        default_h: float,
-    ) -> tuple[float, float]:
-        if frame_sizes is None:
-            return default_w, default_h
-        if isinstance(frame_sizes, dict):
-            wh = frame_sizes.get(frame_id)
-        else:
-            wh = frame_sizes[frame_id] if 0 <= frame_id < len(frame_sizes) else None
-        if wh is None:
-            return default_w, default_h
-        w, h = wh
-        return float(max(w, 1)), float(max(h, 1))
-
-    @staticmethod
-    def _infer_default_frame_size(
-        ball_detections: dict[int, Ball | list[Ball]],
-        rim_detections: dict[int, list[Detection]],
-    ) -> tuple[float, float]:
-        max_x = 1.0
-        max_y = 1.0
-
-        for ball_or_list in ball_detections.values():
-            balls = ball_or_list if isinstance(ball_or_list, list) else [ball_or_list]
-            for b in balls:
-                if b is None or not b.bbox or len(b.bbox) < 4:
-                    continue
-                x1, y1, x2, y2 = [float(v) for v in b.bbox[:4]]
-                max_x = max(max_x, x1, x2)
-                max_y = max(max_y, y1, y2)
-
-        for rims in rim_detections.values():
-            for d in rims:
-                x1, y1, x2, y2 = [float(v) for v in d.get_bbox()]
-                max_x = max(max_x, x1, x2)
-                max_y = max(max_y, y1, y2)
-
-        return max_x + 1.0, max_y + 1.0
-
-    @staticmethod
     def _pick_best_ball(ball_or_list: Ball | list[Ball] | None) -> Ball | None:
         if ball_or_list is None:
             return None
@@ -306,11 +263,15 @@ class ShotEmbedder:
         rim_detections: dict[int, list[Detection]],
         homographies: list[np.ndarray | None] | dict[int, np.ndarray | None],
         *,
-        frame_sizes: dict[int, tuple[int, int]] | list[tuple[int, int]] | None = None,
+        frame_width: float,
+        frame_height: float,
         num_frames: int | None = None,
     ) -> np.ndarray:
         """
         Build flattened frame-wise embedding from detections + homographies.
+
+        *frame_width* / *frame_height* must match the video (e.g. from
+        ``VideoCapture.get(cv2.CAP_PROP_FRAME_WIDTH/HEIGHT)`` or stored clip size).
 
         Returns
         -------
@@ -334,11 +295,12 @@ class ShotEmbedder:
         right_rim_arr = np.zeros((T, self.RIM_DIM), dtype=np.float32)
         kp_arr = np.zeros((T, self.NUM_KEYPOINTS, self.KEYPOINT_DIM), dtype=np.float32)
 
-        default_w, default_h = self._infer_default_frame_size(ball_detections, rim_detections)
+        w_use = float(max(frame_width, 1.0))
+        h_use = float(max(frame_height, 1.0))
 
         for f in range(T):
             H = h_get(f)
-            w, h = self._frame_size_for(f, frame_sizes, default_w=default_w, default_h=default_h)
+            w, h = w_use, h_use
 
             ball = self._pick_best_ball(ball_detections.get(f))
             if ball is not None and ball.bbox and len(ball.bbox) >= 4:

@@ -21,6 +21,7 @@ court_detector:
 ball_detector:
   score_threshold: 0.5
   max_disp_ratio: 0.3333333333
+  step: 1 # step for wasb ball detector, should be 1 or 3
 
 detector:
   initial_threshold: 0.1

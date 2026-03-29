@@ -127,7 +127,7 @@ def video_with_ball_bbox_yolo(
     # Homographies: frame normalized coords [0,1]^2 -> court normalized coords [-0.5,0.5]^2.
     court_constants = CourtConstants(CourtType.NBA)
     court_detector = CourtDetector()
-    homographies, _, _, _ = court_detector.extract_homographies_from_video_v2(vr, court_constants)
+    homographies, _, _ = court_detector.extract_homographies_from_video_v2(vr, court_constants)
     vr.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     kept_ball_by_frame = remove_bad_ball_detections(

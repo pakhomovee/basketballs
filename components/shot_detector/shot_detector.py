@@ -194,11 +194,14 @@ class ShotDetector:
         rim_detections: dict[int, list[Detection]],
         homographies: list[np.ndarray | None] | dict[int, np.ndarray | None],
         *,
-        frame_sizes: dict[int, tuple[int, int]] | list[tuple[int, int]] | None = None,
+        frame_width: float,
+        frame_height: float,
         num_frames: int | None = None,
     ) -> np.ndarray:
         """
         Predict per-frame labels from raw detections + homographies (preferred entry point).
+
+        *frame_width* / *frame_height* must match the video (same capture as homographies).
 
         Returns
         -------
@@ -209,7 +212,8 @@ class ShotDetector:
             ball_detections,
             rim_detections,
             homographies,
-            frame_sizes=frame_sizes,
+            frame_width=frame_width,
+            frame_height=frame_height,
             num_frames=num_frames,
         )
         return self._forward_embedding(embedding)

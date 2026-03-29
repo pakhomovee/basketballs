@@ -225,11 +225,16 @@ class CourtDetector:
            homographies_dist between H_{i+1} and H_i propagated through flow.
         3) Greedy D&C: at each level, take children answers, then try a single
            level-wide RANSAC; keep whichever gives a better objective.
+
+        Returns
+        -------
+        tuple
+            ``(homographies, keypoints_detections, losses)``. Frame size for
+            downstream use comes from ``video.get(CAP_PROP_FRAME_{WIDTH,HEIGHT})``.
         """
         video.set(cv2.CAP_PROP_POS_FRAMES, 0)
         total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        frames_sizes: list[tuple[int, int]] = []
         keypoints_detections: list[tuple[np.ndarray, np.ndarray]] = []
         forward_H_norm: list[Optional[np.ndarray]] = []
 
@@ -241,6 +246,7 @@ class CourtDetector:
         prev_gray: Optional[np.ndarray] = None
         prev_size: Optional[tuple[int, int]] = None
         frame_idx = 0
+        last_w, last_h = 0, 0
 
         print("Reading frames, detecting keypoints and computing optical flow...")
         with tqdm(total=total_frames if total_frames > 0 else None, unit="frame") as pbar:
@@ -249,13 +255,13 @@ class CourtDetector:
                 if not ret:
                     break
                 h, w, _ = frame_bgr.shape
+                last_w, last_h = w, h
                 frame_size = np.array([w, h], dtype=np_dtype)
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
                 pred_centers, pred_cls, pred_confs = self.predict_keypoints(frame_rgb)
                 keypoints_detections.append((pred_centers, pred_cls))
-                frames_sizes.append((w, h))
 
                 src_pts = []
                 dst_pts = []
@@ -284,9 +290,14 @@ class CourtDetector:
                 frame_idx += 1
                 pbar.update(1)
 
-        n = len(frames_sizes)
+        n = len(keypoints_detections)
         if n == 0:
-            return [], [], [], None
+            return [], [], None
+
+        fw = int(video.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        fh = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        if fw <= 0 or fh <= 0:
+            fw, fh = last_w, last_h
 
         # ---- precompute chains and inverses --------------------------------
         H_norm_0_to: list[Optional[np.ndarray]] = [None] * n
@@ -456,7 +467,8 @@ class CourtDetector:
         homographies, losses = self.smooth_homographies_v2(
             homographies,
             keypoints_detections,
-            frames_sizes,
+            fw,
+            fh,
             court_constants,
             forward_H_norm_inv,
             smoothness_cost=smoothness_cost,
@@ -467,13 +479,14 @@ class CourtDetector:
             np_dtype=np_dtype,
         )
 
-        return homographies, frames_sizes, keypoints_detections, losses
+        return homographies, keypoints_detections, losses
 
     def smooth_homographies_v2(
         self,
         homographies: list[Optional[np.ndarray]],
         keypoints_detections: list[tuple[np.ndarray, np.ndarray]],
-        frames_sizes: list[tuple[int, int]],
+        frame_width: int,
+        frame_height: int,
         court_constants: CourtConstants,
         forward_H_norm_inv: list[Optional[np.ndarray]],
         smoothness_cost: float = 200.0,
@@ -518,9 +531,9 @@ class CourtDetector:
         per_src: list[np.ndarray] = []
         per_dst: list[np.ndarray] = []
         counts: list[int] = []
+        w, h = int(frame_width), int(frame_height)
         for i in range(n):
             centers, classes = keypoints_detections[i]
-            w, h = frames_sizes[i]
             s, d = [], []
             for kc, kcls in zip(centers, classes):
                 if kcls not in court_constants.cls_to_points:
@@ -708,7 +721,7 @@ class CourtDetector:
             raise TypeError(f"Unsupported court_type type: {type(court_type_cfg)}")
 
         court_constants = CourtConstants(court_type)
-        homographies, frames_sizes, keypoint_detections, losses = self.extract_homographies_from_video_v2(
+        homographies, _, _ = self.extract_homographies_from_video_v2(
             video,
             court_constants,
             smoothness_cost=self.cfg.court_detector.smoothness_cost,
@@ -717,11 +730,20 @@ class CourtDetector:
             smoothing_lr=self.cfg.court_detector.smoothing_lr,
         )
 
+        frame_w = int(video.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        frame_h = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        if frame_w <= 0 or frame_h <= 0:
+            video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ok, fr = video.read()
+            if ok and fr is not None:
+                frame_h, frame_w = fr.shape[:2]
+        frame_w = max(frame_w, 1)
+        frame_h = max(frame_h, 1)
+
         court_w, court_h = court_constants.court_size
         for frame_id, H in enumerate(homographies):
             if H is None:
                 continue
-            frame_w, frame_h = frames_sizes[frame_id]
             for player in detections.get(frame_id, []):
                 x1, y1, x2, y2 = player.bbox
                 cx = (x1 + x2) / 2.0 / frame_w

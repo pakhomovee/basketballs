@@ -37,6 +37,7 @@ from common.classes.ball import Ball
 from common.utils.models import ensure_models, get_model_paths
 from detector import Detector, get_video_rim_detections
 from ball_detector.detector import WASBBallDetector
+from video_reader import VideoReader
 
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
@@ -77,6 +78,7 @@ def _safe_int(v, default: int) -> int:
 
 
 def _clip_range_from_annotation(rec: dict, total_frames: int) -> tuple[int, int]:
+    """Clamp *start_frame* / *finish_frame* to ``[0, total_frames - 1]`` (logical indices, *target_fps* timeline)."""
     start_frame = rec.get("start_frame")
     finish_frame = rec.get("finish_frame")
 
@@ -96,70 +98,55 @@ def _clip_range_from_annotation(rec: dict, total_frames: int) -> tuple[int, int]
     return start_frame, finish_frame
 
 
-def _get_video_meta(video_path: Path) -> tuple[float, int, int, int]:
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {video_path}")
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 25.0)
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    cap.release()
-    return fps, w, h, total
-
-
-def _crop_video_by_frames(
-    video_path: Path,
+def _crop_video_logical_range(
+    vr: VideoReader,
     start_frame: int,
     finish_frame: int,
     out_path: Path,
 ) -> tuple[float, int, int, int]:
     """
-    Crop [start_frame, finish_frame] (inclusive) into out_path.
+    Copy logical frames ``[start_frame, finish_frame]`` (inclusive) from *vr*
+    and write *out_path* at ``vr.fps``.
 
     Returns
     -------
-    (fps, width, height, written_frames)
+    (effective_fps, width, height, written_frames)
     """
     if finish_frame < start_frame:
         raise ValueError(f"Invalid crop range: {start_frame}..{finish_frame}")
 
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {video_path}")
+    n = finish_frame - start_frame + 1
+    out_fps = float(vr.fps)
+    vr.reset()
+    vr.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 25.0)
-
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-    ret, frame = cap.read()
-    if not ret or frame is None:
-        cap.release()
-        raise RuntimeError(f"Cannot read start frame {start_frame} from {video_path}")
-
-    h, w = frame.shape[:2]
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    writer = cv2.VideoWriter(str(out_path), fourcc, fps, (w, h))
-    if not writer.isOpened():
-        cap.release()
-        raise RuntimeError(f"Cannot open video writer: {out_path}")
-
+    writer: cv2.VideoWriter | None = None
     written = 0
-    # write first frame
-    writer.write(frame)
-    written += 1
+    w = h = 0
 
-    # write remaining frames
-    for _ in range(start_frame + 1, finish_frame + 1):
-        ret, frame = cap.read()
-        if not ret or frame is None:
+    for _ in range(n):
+        ok, frame = vr.read()
+        if not ok or frame is None:
             break
+        if writer is None:
+            fh, fw = frame.shape[:2]
+            w, h = int(fw), int(fh)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            writer = cv2.VideoWriter(str(out_path), fourcc, out_fps, (w, h))
+            if not writer.isOpened():
+                raise RuntimeError(f"Cannot open video writer: {out_path}")
         writer.write(frame)
         written += 1
 
-    cap.release()
-    writer.release()
-    return fps, w, h, written
+    if writer is not None:
+        writer.release()
+
+    if written == 0:
+        raise RuntimeError(
+            f"Cannot read logical frames {start_frame}..{finish_frame} from {vr.video_path}"
+        )
+    return out_fps, w, h, written
 
 
 def _select_best_rim(rims: list, frame_id: int) -> tuple[list[float], float] | None:
@@ -187,7 +174,6 @@ def build_training_dataset(
     include_invalid: bool = False,
     court_type: str = "nba",
     rim_conf_threshold: float = 0.1,
-    ball_step: int = 3,
     slice_to_clip_range: bool = True,
     overwrite: bool = False,
     limit: int | None = None,
@@ -220,7 +206,7 @@ def build_training_dataset(
     court_constants = CourtConstants(ct)
     court_detector = CourtDetector(cfg=cfg)
     detector = Detector(model_path=str(paths.detector), conf_threshold=rim_conf_threshold)
-    wasb_detector = WASBBallDetector(cfg=cfg, step=ball_step)
+    wasb_detector = WASBBallDetector(cfg=cfg)
 
     index_path = out_dir / "index.jsonl"
     index_path.write_text("", encoding="utf-8")
@@ -251,39 +237,52 @@ def build_training_dataset(
                 continue
 
             try:
-                _, frame_w, frame_h, total_frames_cap = _get_video_meta(video_path)
-                start_frame, finish_frame = _clip_range_from_annotation(rec, total_frames_cap)
-
-                crop_path = tmp_root / f"{sample_id}_{start_frame}_{finish_frame}.mp4"
-                fps_crop, crop_w, crop_h, written = _crop_video_by_frames(video_path, start_frame, finish_frame, crop_path)
+                target_fps = cfg.main.target_fps
+                with VideoReader(str(video_path), target_fps=target_fps) as vr:
+                    total_logical = vr.total_frames
+                    start_frame, finish_frame = _clip_range_from_annotation(rec, total_logical)
+                    crop_path = tmp_root / f"{sample_id}_{start_frame}_{finish_frame}.mp4"
+                    fps_crop, crop_w, crop_h, written = _crop_video_logical_range(
+                        vr, start_frame, finish_frame, crop_path
+                    )
                 if written <= 0:
                     raise RuntimeError("Crop video has no frames")
 
                 # Homographies on the cropped video (local frame indices 0..T-1)
-                homographies, frames_sizes, _, _ = court_detector.extract_homographies_from_video_v2(
-                    str(crop_path),
-                    court_constants,
-                    smoothness_cost=cfg.court_detector.smoothness_cost,
-                    keypoint_eps=cfg.court_detector.keypoint_eps,
-                    smoothing_num_epochs=cfg.court_detector.smoothing_num_epochs,
-                    smoothing_lr=cfg.court_detector.smoothing_lr,
-                )
+                cap_crop = cv2.VideoCapture(str(crop_path))
+                if not cap_crop.isOpened():
+                    raise RuntimeError(f"Cannot open cropped video: {crop_path}")
+                try:
+                    homographies, _, _ = court_detector.extract_homographies_from_video_v2(
+                        cap_crop,
+                        court_constants,
+                        smoothness_cost=cfg.court_detector.smoothness_cost,
+                        keypoint_eps=cfg.court_detector.keypoint_eps,
+                        smoothing_num_epochs=cfg.court_detector.smoothing_num_epochs,
+                        smoothing_lr=cfg.court_detector.smoothing_lr,
+                    )
+                finally:
+                    cap_crop.release()
 
-                n_h = len(homographies)
-                n_fs = len(frames_sizes)
-                if n_h <= 0 or n_fs <= 0:
+                T = len(homographies)
+                if T <= 0:
                     raise RuntimeError("No frames for homography extraction")
 
-                T = min(n_h, n_fs)
-                homographies = homographies[:T]
-                frames_sizes = frames_sizes[:T]
+                w_f = max(int(crop_w), 1)
+                h_f = max(int(crop_h), 1)
 
-                # Rim detections on the cropped video
-                video_detections = detector.detect_video(str(crop_path))
-                rims_by_frame = get_video_rim_detections(video_detections, conf_threshold=rim_conf_threshold)
-
-                # Ball detections on the cropped video (already interpolated)
-                ball_detections = wasb_detector.detect_video(str(crop_path))  # local frame_id -> Ball
+                # Rim + ball on the cropped video (Detector / WASB expect VideoCapture, not a path)
+                cap_det = cv2.VideoCapture(str(crop_path))
+                if not cap_det.isOpened():
+                    raise RuntimeError(f"Cannot open cropped video for detection: {crop_path}")
+                try:
+                    video_detections = detector.detect_video(cap_det)
+                    rims_by_frame = get_video_rim_detections(
+                        video_detections, conf_threshold=rim_conf_threshold
+                    )
+                    ball_detections = wasb_detector.detect_video(cap_det)
+                finally:
+                    cap_det.release()
 
                 # Allocate fixed arrays
                 homography_arr = np.zeros((T, 3, 3), dtype=np.float32)
@@ -300,9 +299,6 @@ def build_training_dataset(
 
                 for local_f in range(T):
                     H = homographies[local_f]
-                    w_f, h_f = frames_sizes[local_f]
-                    w_f = max(int(w_f), 1)
-                    h_f = max(int(h_f), 1)
 
                     if H is not None:
                         homography_arr[local_f] = H.astype(np.float32)
@@ -366,6 +362,8 @@ def build_training_dataset(
                     fps=float(fps_crop),
                     frame_count=int(T),
                     frame_offset=int(start_frame),
+                    frame_w=np.int32(w_f),
+                    frame_h=np.int32(h_f),
                     homography=homography_arr,
                     homography_mask=homography_mask,
                     rim_bbox=rim_bbox,
@@ -419,7 +417,6 @@ def _parse_args():
     p.add_argument("--include-invalid", action="store_true", help="Include status=invalid clips")
     p.add_argument("--court-type", type=str, default="nba", choices=["nba", "fiba"], help="Court type")
     p.add_argument("--rim-conf", type=float, default=0.1, help="Detector conf threshold for rims")
-    p.add_argument("--ball-step", type=int, default=3, help="Triplet stride for WASB ball detector")
     p.add_argument("--overwrite", action="store_true", help="Overwrite existing samples")
     p.add_argument("--limit", type=int, default=None, help="Limit number of clips for debugging")
     return p.parse_args()
@@ -442,7 +439,6 @@ if __name__ == "__main__":
         include_invalid=args.include_invalid,
         court_type=args.court_type,
         rim_conf_threshold=args.rim_conf,
-        ball_step=args.ball_step,
         overwrite=args.overwrite,
         limit=args.limit,
     )

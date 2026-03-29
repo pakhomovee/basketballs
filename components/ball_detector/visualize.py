@@ -3,7 +3,8 @@ Visualise WASB ball detection results on a video.
 
 Usage:
     python -m ball_detector.visualize input.mp4 output.mp4
-    python -m ball_detector.visualize input.mp4 output.mp4 --step 1
+
+Frame triplet stride is ``ball_detector.step`` in config (default 1).
 """
 
 import argparse
@@ -18,11 +19,11 @@ from config import load_app_config
 from video_reader import VideoReader
 
 
-def visualize(input_path: str, output_path: str, step: int = 3):
+def visualize(input_path: str, output_path: str):
     cfg = load_app_config(Path(__file__).resolve().parent.parent / "configs" / "main.yaml")
-    detector = WASBBallDetector(cfg=cfg, step=step)
+    detector = WASBBallDetector(cfg=cfg)
     vr = VideoReader(input_path)
-    print(f"Running WASB ball detection (step={step}) on {input_path} …")
+    print(f"Running WASB ball detection (step={detector.step}) on {input_path} …")
     results = detector.detect_video(vr)
 
     fps = vr.get(cv2.CAP_PROP_FPS) or 25.0
@@ -71,11 +72,8 @@ def main():
     parser = argparse.ArgumentParser(description="WASB ball detection visualizer")
     parser.add_argument("input", help="Path to input video")
     parser.add_argument("output", help="Path to output video")
-    parser.add_argument(
-        "--step", type=int, default=1, help="Frame step for the sliding window (1 = overlap, 3 = no overlap)"
-    )
     args = parser.parse_args()
-    visualize(args.input, args.output, step=args.step)
+    visualize(args.input, args.output)
 
 
 if __name__ == "__main__":

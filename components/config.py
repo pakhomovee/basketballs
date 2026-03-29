@@ -36,6 +36,7 @@ class BallDetectorConfig(BaseModel):
 
     score_threshold: float = 0.3
     max_disp_ratio: float = 1 / 3
+    step: int = 1
 
 
 class DetectorConfig(BaseModel):

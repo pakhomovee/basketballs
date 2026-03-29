@@ -15,6 +15,7 @@ from court_detector.court_constants import CourtConstants
 from court_detector.court_detector import CourtDetector
 from detector import Detector, get_video_rim_detections
 from shot_detector.shot_detector import SHOT_CHECKPOINT_FILENAME, ShotDetector
+from video_reader import VideoReader
 
 
 CLASS_LABELS = {
@@ -57,7 +58,6 @@ def visualize_predictions(
     *,
     cfg: AppConfig | None = None,
     rim_conf_threshold: float = 0.25,
-    ball_step: int = 3,
 ) -> None:
     if cfg is None:
         cfg = load_default_config()
@@ -72,101 +72,96 @@ def visualize_predictions(
     print("Loading shot detector...")
     shot_detector = ShotDetector(model_path, cfg=cfg)
 
-    print("Running rim detector...")
-    detector = Detector(conf_threshold=cfg.detector.initial_threshold)
-    video_detections = detector.detect_video(str(input_video))
-    rim_detections = get_video_rim_detections(video_detections, conf_threshold=rim_conf_threshold)
+    target_fps = cfg.main.target_fps
+    with VideoReader(str(input_video), target_fps=target_fps) as vr:
+        print("Running rim detector...")
+        detector = Detector(conf_threshold=cfg.detector.initial_threshold)
+        video_detections = detector.detect_video(vr)
+        rim_detections = get_video_rim_detections(video_detections, conf_threshold=rim_conf_threshold)
 
-    print("Running ball detector...")
-    ball_detector = WASBBallDetector(cfg=cfg, step=ball_step)
-    ball_detections = ball_detector.detect_video(str(input_video))
+        print("Running ball detector...")
+        ball_detector = WASBBallDetector(cfg=cfg)
+        ball_detections = ball_detector.detect_video(vr)
 
-    print("Estimating homographies...")
-    court_detector = CourtDetector(cfg=cfg)
-    homographies, frame_sizes, _, _ = court_detector.extract_homographies_from_video_v2(
-        str(input_video),
-        court_constants,
-        smoothness_cost=cfg.court_detector.smoothness_cost,
-        keypoint_eps=cfg.court_detector.keypoint_eps,
-        smoothing_num_epochs=cfg.court_detector.smoothing_num_epochs,
-        smoothing_lr=cfg.court_detector.smoothing_lr,
-    )
-
-    n_frames = len(frame_sizes)
-    if n_frames == 0:
-        raise RuntimeError("No frames were read from video")
-
-    print("Running shot prediction...")
-    preds = shot_detector.predict_from_detections(
-        ball_detections,
-        rim_detections,
-        homographies,
-        frame_sizes=frame_sizes,
-        num_frames=n_frames,
-    )
-
-    cap = cv2.VideoCapture(str(input_video))
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {input_video}")
-
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 25.0)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-    if width <= 0 or height <= 0:
-        cap.release()
-        raise RuntimeError("Invalid video frame size")
-
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(output_video), fourcc, fps, (width, height))
-    if not writer.isOpened():
-        cap.release()
-        raise RuntimeError(f"Cannot open video writer: {output_video}")
-
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or n_frames)
-    total = min(total, n_frames, len(preds))
-
-    for frame_id in tqdm(range(total), desc="Writing visualization", unit="frame"):
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        ball = ball_detections.get(frame_id)
-        if ball is not None and ball.bbox and len(ball.bbox) >= 4:
-            conf = 0.0 if ball.confidence is None else float(ball.confidence)
-            _draw_bbox(frame, ball.bbox, (0, 255, 0), f"ball {conf:.2f}")
-
-        rims = rim_detections.get(frame_id, [])
-        for r in rims:
-            _draw_bbox(frame, r.get_bbox(), (255, 255, 0), f"rim {float(r.confidence):.2f}")
-
-        cls = int(preds[frame_id])
-        cls_name = CLASS_LABELS.get(cls, str(cls))
-        cls_color = CLASS_COLORS.get(cls, (255, 255, 255))
-        cv2.putText(
-            frame,
-            f"class: {cls_name}",
-            (16, 32),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1.0,
-            cls_color,
-            2,
-            cv2.LINE_AA,
-        )
-        cv2.putText(
-            frame,
-            f"frame: {frame_id}",
-            (16, 62),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
+        print("Estimating homographies...")
+        court_detector = CourtDetector(cfg=cfg)
+        homographies, _, _ = court_detector.extract_homographies_from_video_v2(
+            vr,
+            court_constants,
+            smoothness_cost=cfg.court_detector.smoothness_cost,
+            keypoint_eps=cfg.court_detector.keypoint_eps,
+            smoothing_num_epochs=cfg.court_detector.smoothing_num_epochs,
+            smoothing_lr=cfg.court_detector.smoothing_lr,
         )
 
-        writer.write(frame)
+        n_frames = len(homographies)
+        if n_frames == 0:
+            raise RuntimeError("No frames were read from video")
 
-    cap.release()
-    writer.release()
+        print("Running shot prediction...")
+        preds = shot_detector.predict_from_detections(
+            ball_detections,
+            rim_detections,
+            homographies,
+            frame_width=float(vr.width),
+            frame_height=float(vr.height),
+            num_frames=vr.total_frames,
+        )
+
+        width, height = vr.width, vr.height
+        if width <= 0 or height <= 0:
+            raise RuntimeError("Invalid video frame size")
+
+        fps = float(vr.fps)
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(output_video), fourcc, fps, (width, height))
+        if not writer.isOpened():
+            raise RuntimeError(f"Cannot open video writer: {output_video}")
+
+        total = min(vr.total_frames, n_frames, len(preds))
+        vr.reset()
+
+        for frame_id in tqdm(range(total), desc="Writing visualization", unit="frame"):
+            ret, frame = vr.read()
+            if not ret or frame is None:
+                break
+
+            ball = ball_detections.get(frame_id)
+            if ball is not None and ball.bbox and len(ball.bbox) >= 4:
+                conf = 0.0 if ball.confidence is None else float(ball.confidence)
+                _draw_bbox(frame, ball.bbox, (0, 255, 0), f"ball {conf:.2f}")
+
+            rims = rim_detections.get(frame_id, [])
+            for r in rims:
+                _draw_bbox(frame, r.get_bbox(), (255, 255, 0), f"rim {float(r.confidence):.2f}")
+
+            cls = int(preds[frame_id])
+            cls_name = CLASS_LABELS.get(cls, str(cls))
+            cls_color = CLASS_COLORS.get(cls, (255, 255, 255))
+            cv2.putText(
+                frame,
+                f"class: {cls_name}",
+                (16, 32),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.0,
+                cls_color,
+                2,
+                cv2.LINE_AA,
+            )
+            cv2.putText(
+                frame,
+                f"frame: {frame_id}",
+                (16, 62),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+
+            writer.write(frame)
+
+        writer.release()
     print(f"Saved visualization to {output_video}")
 
 
@@ -187,7 +182,6 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--config", type=str, default=None, help="Optional config YAML path")
     p.add_argument("--court-type", type=str, default="nba", choices=["nba", "fiba"])
     p.add_argument("--rim-conf", type=float, default=0.25, help="Rim confidence threshold")
-    p.add_argument("--ball-step", type=int, default=3, help="WASB triplet step")
     return p.parse_args()
 
 
@@ -203,5 +197,4 @@ if __name__ == "__main__":
         model_path=args.model_path,
         cfg=cfg,
         rim_conf_threshold=args.rim_conf,
-        ball_step=args.ball_step,
     )

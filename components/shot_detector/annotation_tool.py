@@ -9,6 +9,9 @@ from pathlib import Path
 
 import cv2
 
+from config import AppConfig, load_app_config, load_default_config
+from video_reader import VideoReader
+
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 WINDOW_NAME = "Shot Annotation Tool"
@@ -128,20 +131,26 @@ def _draw_help_overlay(
         y += 22
 
 
-def _jump(cap: cv2.VideoCapture, target: int, total_frames: int) -> int:
+def _jump(vr: VideoReader, target: int, total_frames: int) -> int:
     target = max(0, min(total_frames - 1, target)) if total_frames > 0 else 0
-    cap.set(cv2.CAP_PROP_POS_FRAMES, target)
+    vr.set(cv2.CAP_PROP_POS_FRAMES, target)
     return target
 
 
-def _annotate_single_clip(clip_path: Path, ann: ClipAnnotation) -> tuple[str, ClipAnnotation]:
-    cap = cv2.VideoCapture(str(clip_path))
-    if not cap.isOpened():
+def _annotate_single_clip(
+    clip_path: Path,
+    ann: ClipAnnotation,
+    *,
+    target_fps: int,
+) -> tuple[str, ClipAnnotation]:
+    try:
+        vr = VideoReader(str(clip_path), target_fps=target_fps)
+    except FileNotFoundError:
         print(f"[WARN] Cannot open clip: {clip_path}")
         return "skip", ann
 
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 25.0)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    fps = float(vr.fps)
+    total_frames = int(vr.total_frames)
     ann.fps = fps
     ann.total_frames = total_frames
     if ann.start_frame is None:
@@ -162,18 +171,18 @@ def _annotate_single_clip(clip_path: Path, ann: ClipAnnotation) -> tuple[str, Cl
 
     while True:
         if playing:
-            ret, frame = cap.read()
+            ret, frame = vr.read()
             if not ret:
                 playing = False
                 if last_frame is None:
                     break
                 frame = last_frame.copy()
             else:
-                frame_idx = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+                frame_idx = int(vr.get(cv2.CAP_PROP_POS_FRAMES)) - 1
                 last_frame = frame.copy()
         else:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ret, frame = cap.read()
+            vr.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ret, frame = vr.read()
             if not ret:
                 break
             last_frame = frame.copy()
@@ -191,22 +200,22 @@ def _annotate_single_clip(clip_path: Path, ann: ClipAnnotation) -> tuple[str, Cl
             playing = not playing
         elif key == ord("a"):
             playing = False
-            frame_idx = _jump(cap, frame_idx - 1, total_frames)
+            frame_idx = _jump(vr, frame_idx - 1, total_frames)
         elif key == ord("d"):
             playing = False
-            frame_idx = _jump(cap, frame_idx + 1, total_frames)
+            frame_idx = _jump(vr, frame_idx + 1, total_frames)
         elif key == ord("j"):
             playing = False
-            frame_idx = _jump(cap, frame_idx - 10, total_frames)
+            frame_idx = _jump(vr, frame_idx - 10, total_frames)
         elif key == ord("l"):
             playing = False
-            frame_idx = _jump(cap, frame_idx + 10, total_frames)
+            frame_idx = _jump(vr, frame_idx + 10, total_frames)
         elif key == ord("u"):
             playing = False
-            frame_idx = _jump(cap, frame_idx - 50, total_frames)
+            frame_idx = _jump(vr, frame_idx - 50, total_frames)
         elif key == ord("o"):
             playing = False
-            frame_idx = _jump(cap, frame_idx + 50, total_frames)
+            frame_idx = _jump(vr, frame_idx + 50, total_frames)
         elif key == ord("z"):
             ann.start_frame = frame_idx
             if ann.finish_frame is not None and ann.start_frame > ann.finish_frame:
@@ -234,10 +243,10 @@ def _annotate_single_clip(clip_path: Path, ann: ClipAnnotation) -> tuple[str, Cl
             ann.make_end_frame = None
             ann.status = "ok"
         elif key == ord("n"):
-            cap.release()
+            vr.release()
             return "skip", ann
         elif key == ord("b"):
-            cap.release()
+            vr.release()
             return "back", ann
         elif key == ord("s"):
             try:
@@ -246,13 +255,13 @@ def _annotate_single_clip(clip_path: Path, ann: ClipAnnotation) -> tuple[str, Cl
                 print(f"[ERROR] Invalid annotation: {e}")
                 continue
             ann.updated_at = datetime.now(timezone.utc).isoformat()
-            cap.release()
+            vr.release()
             return "save", ann
         elif key == ord("q"):
-            cap.release()
+            vr.release()
             return "quit", ann
 
-    cap.release()
+    vr.release()
     return "skip", ann
 
 
@@ -280,7 +289,11 @@ def run_annotation_tool(
     annotations_path: Path,
     *,
     seed: int | None = None,
+    cfg: AppConfig | None = None,
 ) -> None:
+    if cfg is None:
+        cfg = load_default_config()
+    target_fps = cfg.main.target_fps
     clips_root = dataset_dir / "data"
     clips = _discover_clips(clips_root)
     if not clips:
@@ -332,7 +345,7 @@ def run_annotation_tool(
         ann = ClipAnnotation(clip_path=rel_path)
 
         print(f"\nAnnotating ({i + 1}/{len(unannotated)}): {rel_path}")
-        action, ann = _annotate_single_clip(clip_path, ann)
+        action, ann = _annotate_single_clip(clip_path, ann, target_fps=target_fps)
 
         if action == "save":
             saved[rel_path] = asdict(ann)
@@ -346,7 +359,9 @@ def run_annotation_tool(
             if prev_path in saved:
                 prev_ann = _annotation_from_record(saved[prev_path])
                 print(f"\nBack to ({i + 1}/{len(unannotated)}): {prev_path}")
-                action2, edited = _annotate_single_clip(dataset_dir / prev_path, prev_ann)
+                action2, edited = _annotate_single_clip(
+                    dataset_dir / prev_path, prev_ann, target_fps=target_fps
+                )
                 if action2 == "save":
                     saved[prev_path] = asdict(edited)
                     _save_annotations(annotations_path, saved)
@@ -381,10 +396,22 @@ def _parse_args() -> argparse.Namespace:
         help="Output JSON file with annotations",
     )
     parser.add_argument("--seed", type=int, default=None, help="Seed for random clip order")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Optional AppConfig YAML (uses main.target_fps, default 30)",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
-    run_annotation_tool(dataset_dir=args.dataset_dir, annotations_path=args.annotations, seed=args.seed)
+    cfg = load_default_config() if args.config is None else load_app_config(args.config)
+    run_annotation_tool(
+        dataset_dir=args.dataset_dir,
+        annotations_path=args.annotations,
+        seed=args.seed,
+        cfg=cfg,
+    )
 
