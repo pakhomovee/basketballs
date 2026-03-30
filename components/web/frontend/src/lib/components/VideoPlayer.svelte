@@ -249,27 +249,25 @@
 				framerate: exportFps
 			});
 
-		const wasPaused = video.paused;
-		video.pause();
-		const savedTime = video.currentTime;
+			const wasPaused = video.paused;
+			video.pause();
+			const savedTime = video.currentTime;
 
-		function waitForSeek(): Promise<void> {
-			return new Promise<void>((resolve) => {
-				video.addEventListener('seeked', () => resolve(), { once: true });
-			});
-		}
+			function waitForSeek(): Promise<void> {
+				return new Promise<void>((resolve) => {
+					video.addEventListener('seeked', () => resolve(), { once: true });
+				});
+			}
 
-		const lastAnnotatedFrame = Math.max(
-			...Object.keys(annotations.frames).map(Number)
-		);
-		const exportTotal = Math.min(totalFrames, lastAnnotatedFrame + 1);
+			const lastAnnotatedFrame = Math.max(...Object.keys(annotations.frames).map(Number));
+			const exportTotal = Math.min(totalFrames, lastAnnotatedFrame + 1);
 
-		for (let f = 0; f < exportTotal; f++) {
-			const seekTime = Math.min(f / fps, video.duration - 0.001);
-			video.currentTime = seekTime;
-			await waitForSeek();
+			for (let f = 0; f < exportTotal; f++) {
+				const seekTime = Math.min(f / fps, video.duration - 0.001);
+				video.currentTime = seekTime;
+				await waitForSeek();
 
-			await tick();
+				await tick();
 
 				// Compose frame onto offscreen canvas
 				offCtx.drawImage(video, 0, 0, natW, natH);
@@ -329,12 +327,12 @@
 			<video
 				bind:this={video}
 				{src}
-			onloadedmetadata={onLoadedMetadata}
-			ontimeupdate={onTimeUpdate}
-			onseeked={() => {
-				if (!exporting) syncFrame();
-			}}
-			onplay={() => {
+				onloadedmetadata={onLoadedMetadata}
+				ontimeupdate={onTimeUpdate}
+				onseeked={() => {
+					if (!exporting) syncFrame();
+				}}
+				onplay={() => {
 					playing = true;
 				}}
 				onpause={() => {
@@ -343,8 +341,8 @@
 				onerror={() => {
 					videoError = true;
 				}}
-			class="w-full h-full"
-			preload="auto"
+				class="w-full h-full"
+				preload="auto"
 			>
 				<track kind="captions" />
 			</video>

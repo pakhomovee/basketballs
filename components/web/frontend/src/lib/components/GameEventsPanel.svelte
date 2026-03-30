@@ -175,11 +175,15 @@
 						{#if evt.shooter_player_id != null}
 							<span
 								class="inline-flex items-center gap-1 text-sm font-medium"
-								style:color={evt.shooter_team_id != null ? teamColor(evt.shooter_team_id) : 'var(--color-text)'}
+								style:color={evt.shooter_team_id != null
+									? teamColor(evt.shooter_team_id)
+									: 'var(--color-text)'}
 							>
 								<span
 									class="w-1.5 h-1.5 rounded-full inline-block"
-									style:background={evt.shooter_team_id != null ? teamColor(evt.shooter_team_id) : 'var(--color-text-muted)'}
+									style:background={evt.shooter_team_id != null
+										? teamColor(evt.shooter_team_id)
+										: 'var(--color-text-muted)'}
 								></span>
 								{evt.shooter_track_number != null ? `#${evt.shooter_track_number} ` : ''}ID {evt.shooter_player_id}
 							</span>
