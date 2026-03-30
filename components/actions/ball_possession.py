@@ -462,7 +462,7 @@ class BallPossession:
         min_expand_px: int = 3,
         other_max_share: float = 0.35,
         min_owner_share: float = 0.55,
-        max_pass_gap_frames: int = 45,
+        max_pass_gap_seconds: float = 0.75,
     ) -> None:
         from .passes import find_team_passes
 
@@ -479,8 +479,9 @@ class BallPossession:
             min_owner_share=min_owner_share,
         )
         apply_possession_segments(players_detections, self.segments)
+        max_gap_frames = max(1, int(round(max_pass_gap_seconds * fps))) if fps > 0 else 1
         self.pass_events = find_team_passes(
             self.segments,
             players_detections,
-            max_gap_frames=max_pass_gap_frames,
+            max_gap_frames=max_gap_frames,
         )
