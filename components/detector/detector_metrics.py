@@ -1073,7 +1073,10 @@ def compute_player_metrics_yolo_builtin(
     target_cls = torch.cat(all_target_cls) if all_target_cls else torch.zeros(0)
 
     results = ap_per_class(
-        tp.numpy(), conf.numpy(), pred_cls.numpy(), target_cls.numpy(),
+        tp.numpy(),
+        conf.numpy(),
+        pred_cls.numpy(),
+        target_cls.numpy(),
         names={0: "player"},
     )
     p, r, f1_arr, ap = results[2], results[3], results[4], results[5]
@@ -1178,10 +1181,7 @@ def compute_player_united_metrics_yolo_builtin(
                     gt_boxes_list.append([x1, y1, x2, y2])
 
         detections = detector.detect_frame(img)
-        player_dets = [
-            d for d in detections
-            if d.class_id in pred_class_set and d.confidence >= conf_threshold
-        ]
+        player_dets = [d for d in detections if d.class_id in pred_class_set and d.confidence >= conf_threshold]
         player_dets.sort(key=lambda d: -d.confidence)
 
         n_gt = len(gt_boxes_list)
@@ -1239,7 +1239,10 @@ def compute_player_united_metrics_yolo_builtin(
     target_cls = torch.cat(all_target_cls) if all_target_cls else torch.zeros(0)
 
     results = ap_per_class(
-        tp.numpy(), conf.numpy(), pred_cls.numpy(), target_cls.numpy(),
+        tp.numpy(),
+        conf.numpy(),
+        pred_cls.numpy(),
+        target_cls.numpy(),
         names={0: "player-united"},
     )
     p, r, f1_arr, ap = results[2], results[3], results[4], results[5]
@@ -1305,23 +1308,31 @@ if __name__ == "__main__":
     parser.add_argument("--rim", "-r", action="store_true", help="Compute rim metrics (default: players)")
     parser.add_argument("--rfdetr", action="store_true", help="Use RF-DETR backend (players/ball/rim)")
     parser.add_argument(
-        "--yolo-builtin", action="store_true",
+        "--yolo-builtin",
+        action="store_true",
         help="Use YOLO matching for player metrics (single-class player dataset)",
     )
     parser.add_argument(
-        "--player-united", action="store_true",
+        "--player-united",
+        action="store_true",
         help="Merge player + player-dribble as one class (multi-class dataset)",
     )
     parser.add_argument("--model", "-m", type=str, default=None, help="Path to detector checkpoint")
     parser.add_argument("--conf", type=float, default=0.001, help="Confidence threshold")
     parser.add_argument("--iou", type=float, default=0.5, help="IoU threshold for P/R")
-    parser.add_argument("--split", type=str, default="test", help="Dataset split (for --yolo-builtin / --player-united)")
     parser.add_argument(
-        "--gt-classes", type=str, default=None,
+        "--split", type=str, default="test", help="Dataset split (for --yolo-builtin / --player-united)"
+    )
+    parser.add_argument(
+        "--gt-classes",
+        type=str,
+        default=None,
         help="Comma-separated GT class ids to merge as player (for --player-united, default: 2,3)",
     )
     parser.add_argument(
-        "--pred-classes", type=str, default=None,
+        "--pred-classes",
+        type=str,
+        default=None,
         help="Comma-separated pred class ids to merge as player (for --player-united, default: 2,3)",
     )
     args = parser.parse_args()

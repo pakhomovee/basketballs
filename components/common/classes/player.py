@@ -26,6 +26,7 @@ class Player:
     confidence: float | None = None
 
     number: Number | None = None
+    track_number: int | None = None
     skeleton: Skeleton | None = None
     is_dribble: bool = False
     is_possession_raw: bool = False

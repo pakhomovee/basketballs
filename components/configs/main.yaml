@@ -28,7 +28,7 @@ detector:
   player_conf_threshold: 0.1
   referee_conf_threshold: 0.25
   number_conf_threshold: 0.25
-  ocr_conf_threshold: 0.999
+  ocr_conf_threshold: 0.9
 
 tracker:
   num_tracks: 10
@@ -53,6 +53,16 @@ tracker:
   occlusion_gate: 50.0
   occlusion_penalty: 0.1
   occlusion_start_pass: 2
+
+actions:
+  bbox_expand_ratio: 0.05
+  min_expand_px: 3
+  other_max_share: 0.35
+  min_owner_share: 0.55
+  max_pass_gap_seconds: 0.75
+  shot_attribution_back_seconds: 0.5
+  shot_attribution_forward_seconds: 0.75
+  track_number_min_share: 0.8
 
 smoother:
   obs_noise: 0.1

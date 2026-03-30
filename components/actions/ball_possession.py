@@ -11,6 +11,9 @@ from common.classes.possession_segment import PossessionSegment
 
 _HALF_SECOND = 0.5
 
+# Untracked / invalid ReID id — excluded from possession scoring and ownership.
+_SENTINEL_PLAYER_ID = -1
+
 
 def _half_second_frame_count(fps: float) -> int:
     """Number of frames in 0.5 s at the given FPS (at least 1)."""
@@ -83,6 +86,8 @@ def assign_ball_possession(
         ball_cy = (by1 + by2) / 2.0
 
         for player in players:
+            if player.player_id == _SENTINEL_PLAYER_ID:
+                continue
             hand_points = _get_hand_points(player, conf_threshold=wrist_conf_threshold)
             if not hand_points:
                 continue
@@ -103,7 +108,7 @@ def assign_ball_possession(
 
 def _frame_conf_map(players: list[Player]) -> dict[int, float]:
     """Per-frame weights for segment scoring: player_id -> 1.0 if is_possession else omitted."""
-    return {p.player_id: 1.0 for p in players if p.is_possession}
+    return {p.player_id: 1.0 for p in players if p.is_possession and p.player_id != _SENTINEL_PLAYER_ID}
 
 
 def _segment_ok(
@@ -255,6 +260,8 @@ def apply_possession_segments(
 
     for seg in segments:
         start, end, owner_id = seg.start_frame, seg.end_frame, seg.owner_player_id
+        if owner_id == _SENTINEL_PLAYER_ID:
+            continue
         if end < start:
             continue
         for frame_id in range(start, end + 1):
@@ -282,6 +289,10 @@ def assign_ball_possession_soft_dribble(
     """
     for frame_id, players in players_detections.items():
         for player in players:
+            if player.player_id == _SENTINEL_PLAYER_ID:
+                player.is_possession = False
+                player.is_possession_raw = False
+                continue
             v = bool(getattr(player, "is_dribble", False))
             player.is_possession = v
             player.is_possession_raw = v
@@ -298,6 +309,8 @@ def assign_ball_possession_soft_dribble(
 
         owners: list[Player] = []
         for player in players:
+            if player.player_id == _SENTINEL_PLAYER_ID:
+                continue
             if len(player.bbox) < 4:
                 continue
             x1, y1, x2, y2 = player.bbox[:4]
@@ -404,7 +417,10 @@ def greedy_possession_segments_soft_dribble(
     if not frame_ids:
         return []
 
-    frame_hits = [{p.player_id: 1 for p in players_detections[fid] if p.is_possession} for fid in frame_ids]
+    frame_hits = [
+        {p.player_id: 1 for p in players_detections[fid] if p.is_possession and p.player_id != _SENTINEL_PLAYER_ID}
+        for fid in frame_ids
+    ]
     n = len(frame_ids)
     segments: list[PossessionSegment] = []
 
@@ -440,6 +456,14 @@ def greedy_possession_segments_soft_dribble(
         i = best_j + 1
 
     return segments
+
+
+def clear_possession_for_untracked_players(players_detections: PlayersDetections) -> None:
+    """Untracked ids must never carry final possession (defence in depth)."""
+    for players in players_detections.values():
+        for p in players:
+            if p.player_id == _SENTINEL_PLAYER_ID:
+                p.is_possession = False
 
 
 @dataclass
@@ -479,6 +503,7 @@ class BallPossession:
             min_owner_share=min_owner_share,
         )
         apply_possession_segments(players_detections, self.segments)
+        clear_possession_for_untracked_players(players_detections)
         max_gap_frames = max(1, int(round(max_pass_gap_seconds * fps))) if fps > 0 else 1
         self.pass_events = find_team_passes(
             self.segments,

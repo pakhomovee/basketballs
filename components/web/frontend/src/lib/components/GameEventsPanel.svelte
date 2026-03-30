@@ -11,10 +11,11 @@
 		passEvents: PassEventAnnotation[];
 		shotEvents: ShotEventAnnotation[];
 		currentFrame: number;
+		fps: number;
 		onSeek: (time: number) => void;
 	}
 
-	let { passEvents, shotEvents, currentFrame, onSeek }: Props = $props();
+	let { passEvents, shotEvents, currentFrame, fps, onSeek }: Props = $props();
 
 	function teamColor(teamId: number): string {
 		return TEAM_COLORS[teamId] ?? TEAM_COLORS[0];
@@ -63,14 +64,7 @@
 				if (s.frame_start <= currentFrame && s.frame_end >= currentFrame) return i;
 			}
 		}
-
-		let best = -1;
-		for (let i = 0; i < list.length; i++) {
-			const row = list[i];
-			const start = row.kind === 'pass' ? row.pass.frame_start : row.shot.frame_start;
-			if (start <= currentFrame) best = i;
-		}
-		return best;
+		return -1;
 	});
 </script>
 
@@ -93,7 +87,7 @@
 				{@const evt = row.pass}
 				{@const isActive = i === activeIndex}
 				<button
-					onclick={() => onSeek(evt.timestamp_sec)}
+					onclick={() => onSeek((evt.frame_start + 0.5) / fps)}
 					class="w-full text-left rounded-lg px-3 py-2 transition-all group
 						{isActive
 						? 'bg-[var(--color-ball)]/10 border border-[var(--color-ball)]/30'
@@ -125,14 +119,14 @@
 									class="w-1.5 h-1.5 rounded-full inline-block"
 									style:background={teamColor(evt.team_id)}
 								></span>
-								#{evt.from_player_id}
+								{evt.from_track_number != null ? `#${evt.from_track_number} ` : ''}ID {evt.from_player_id}
 							</span>
 							<span class="text-[var(--color-text-muted)]">→</span>
 							<span
 								class="inline-flex items-center gap-1 font-medium"
 								style:color={teamColor(evt.team_id)}
 							>
-								#{evt.to_player_id}
+								{evt.to_track_number != null ? `#${evt.to_track_number} ` : ''}ID {evt.to_player_id}
 							</span>
 						</div>
 					</div>
@@ -176,6 +170,18 @@
 								class="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/30"
 							>
 								Make
+							</span>
+						{/if}
+						{#if evt.shooter_player_id != null}
+							<span
+								class="inline-flex items-center gap-1 text-sm font-medium"
+								style:color={evt.shooter_team_id != null ? teamColor(evt.shooter_team_id) : 'var(--color-text)'}
+							>
+								<span
+									class="w-1.5 h-1.5 rounded-full inline-block"
+									style:background={evt.shooter_team_id != null ? teamColor(evt.shooter_team_id) : 'var(--color-text-muted)'}
+								></span>
+								{evt.shooter_track_number != null ? `#${evt.shooter_track_number} ` : ''}ID {evt.shooter_player_id}
 							</span>
 						{/if}
 					</div>

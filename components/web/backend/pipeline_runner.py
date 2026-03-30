@@ -66,12 +66,16 @@ def _run_pipeline(job_id: str, video_path: str) -> None:
     result = run_pipeline(video_path, cfg, stage_logger=stage_logger)
 
     stage_logger.set_stage("Exporting annotations…", PIPELINE_TOTAL_STAGES)
+    act_cfg = cfg.actions
     annotation_data = export_annotations(
         result.players_detections,
         result.ball_detections,
         result.video_meta,
         pass_events=result.pass_events,
         shot_events=result.shot_events,
+        possession_segments=result.possession_segments,
+        shot_attribution_back_sec=act_cfg.shot_attribution_back_seconds,
+        shot_attribution_forward_sec=act_cfg.shot_attribution_forward_seconds,
     )
     save_annotations(annotation_data, job_dir(job_id) / "annotations.json")
     stage_logger.set_stage("Done", total_stages)

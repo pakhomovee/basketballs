@@ -139,19 +139,30 @@ export function drawAnnotations(
 	}
 
 	// 5. Jersey numbers
-	if (toggles.jerseyNumbers) {
+	if (toggles.trackNumbers || toggles.rawJerseyNumbers) {
 		for (const p of fd.players) {
-			if (!p.jersey_number || !p.bbox) continue;
+			if (!p.bbox) continue;
 			const [x1, y1, x2] = p.bbox;
 			const cx = ((x1 + x2) / 2) * sx;
-			const ty = y1 * sy - 6;
+			let ty = y1 * sy - 6;
 			ctx.font = 'bold 13px Inter, sans-serif';
 			ctx.textAlign = 'center';
-			ctx.fillStyle = '#fff';
-			ctx.strokeStyle = 'rgba(0,0,0,0.7)';
 			ctx.lineWidth = 3;
-			ctx.strokeText(`#${p.jersey_number}`, cx, ty);
-			ctx.fillText(`#${p.jersey_number}`, cx, ty);
+
+			if (toggles.trackNumbers && p.track_number != null) {
+				ctx.fillStyle = '#fff';
+				ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+				ctx.strokeText(`#${p.track_number}`, cx, ty);
+				ctx.fillText(`#${p.track_number}`, cx, ty);
+				ty -= 16;
+			}
+
+			if (toggles.rawJerseyNumbers && p.jersey_number != null) {
+				ctx.fillStyle = 'rgba(255,255,180,0.9)';
+				ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+				ctx.strokeText(`#${p.jersey_number}`, cx, ty);
+				ctx.fillText(`#${p.jersey_number}`, cx, ty);
+			}
 		}
 	}
 

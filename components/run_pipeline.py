@@ -7,6 +7,7 @@ from typing import Protocol, Any
 from ball_detector.detector import WASBBallDetector
 from court_detector.court_detector import CourtDetector
 from detector import Detector, enrich_detections_with_numbers, enrich_players_with_pose, get_video_rim_detections
+from detector.enrich import propagate_track_numbers
 from actions.ball_possession import BallPossession
 from common.classes import CourtType, ShotEvent
 from common.utils.models import ensure_models, get_model_paths
@@ -129,9 +130,21 @@ def run_pipeline(
         team_clustering = TeamClustering(cfg=cfg)
         team_clustering.run(players_detections)
 
+        act_cfg = cfg.actions
+        propagate_track_numbers(players_detections, min_share=act_cfg.track_number_min_share)
+
         stage_logger.set_stage("Possession & smoothing…", 10)
         ball_possession = BallPossession()
-        ball_possession.run(players_detections, ball_detections, fps=video_fps)
+        ball_possession.run(
+            players_detections,
+            ball_detections,
+            fps=video_fps,
+            bbox_expand_ratio=act_cfg.bbox_expand_ratio,
+            min_expand_px=act_cfg.min_expand_px,
+            other_max_share=act_cfg.other_max_share,
+            min_owner_share=act_cfg.min_owner_share,
+            max_pass_gap_seconds=act_cfg.max_pass_gap_seconds,
+        )
         possession_segments = ball_possession.segments
         pass_events = ball_possession.pass_events
 

@@ -166,6 +166,26 @@ class BenchmarksConfig(BaseModel):
     team_clustering: TeamClusteringBenchmarkConfig = TeamClusteringBenchmarkConfig()
 
 
+class ActionsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Possession segmentation
+    bbox_expand_ratio: float = 0.05
+    min_expand_px: int = 3
+    other_max_share: float = 0.35
+    min_owner_share: float = 0.55
+
+    # Pass detection
+    max_pass_gap_seconds: float = 0.75
+
+    # Shot attribution
+    shot_attribution_back_seconds: float = 0.5
+    shot_attribution_forward_seconds: float = 0.25
+
+    # Track number propagation
+    track_number_min_share: float = 0.8
+
+
 class SmootherConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -183,6 +203,7 @@ class AppConfig(BaseModel):
     detector: DetectorConfig = DetectorConfig()
     tracker: TrackerConfig = TrackerConfig()
     team_clustering: TeamClusteringConfig = TeamClusteringConfig()
+    actions: ActionsConfig = ActionsConfig()
     smoother: SmootherConfig = SmootherConfig()
     models: ModelConfig = ModelConfig()
     benchmarks: BenchmarksConfig = BenchmarksConfig()

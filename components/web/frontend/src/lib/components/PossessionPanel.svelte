@@ -18,8 +18,9 @@
 	});
 
 	function label(p: PlayerAnnotation): string {
-		let parts: string[] = [`#${p.player_id}`];
-		if (p.jersey_number != null) parts.push(`Jersey ${p.jersey_number}`);
+		let parts: string[] = [];
+		if (p.track_number != null) parts.push(`#${p.track_number}`);
+		parts.push(`ID ${p.player_id}`);
 		if (p.team_id != null) parts.push(`Team ${p.team_id + 1}`);
 		return parts.join(' · ');
 	}

@@ -48,14 +48,12 @@
 	let minimapDragRight = $state(16);
 	let minimapDragBottom = $state(16);
 
-	// Derive fps from actual video duration + total_frames for precision.
-	// cv2's stored fps can be slightly off; dividing total_frames by real duration is more accurate.
-	const fps = $derived.by(() => {
-		if (annotations && duration > 0) {
-			return annotations.metadata.total_frames / duration;
-		}
-		return annotations?.metadata.fps ?? 30;
-	});
+	// Use the pipeline's target fps directly — this is what the logical frame
+	// indices in the annotations are based on.  Deriving fps from
+	// total_frames / browser_duration is fragile: the browser may report a
+	// different duration (e.g. when the last N source frames are corrupt,
+	// or the container has a non-zero start PTS).
+	const fps = $derived(annotations?.metadata.fps ?? 30);
 
 	onMount(() => {
 		const observer = new ResizeObserver(() => updateSize());
@@ -90,32 +88,30 @@
 		if (annotations) updateSize();
 	});
 
+	function timeToFrame(t: number): number {
+		return Math.floor(t * fps + 1e-9);
+	}
+
+	function syncFrame() {
+		const t = video.currentTime;
+		currentTime = t;
+		const newFrame = timeToFrame(t);
+		if (newFrame !== currentFrame) {
+			currentFrame = newFrame;
+			updateTrails(newFrame);
+		}
+	}
+
 	function startFrameLoop() {
 		if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
-			// Fires exactly when each video frame is painted — perfect annotation sync
-			function onVideoFrame(_now: DOMHighResTimeStamp, meta: { mediaTime: number }) {
-				const t = meta.mediaTime;
-				currentTime = t;
-				const newFrame = Math.floor(t * fps);
-				if (newFrame !== currentFrame) {
-					currentFrame = newFrame;
-					updateTrails(newFrame);
-				}
+			function onVideoFrame() {
+				syncFrame();
 				rvfcHandle = (video as any).requestVideoFrameCallback(onVideoFrame);
 			}
 			rvfcHandle = (video as any).requestVideoFrameCallback(onVideoFrame);
 		} else {
-			// Fallback for browsers without RVFC support
 			function frame() {
-				if (video && !video.paused) {
-					const t = video.currentTime;
-					currentTime = t;
-					const newFrame = Math.floor(t * fps);
-					if (newFrame !== currentFrame) {
-						currentFrame = newFrame;
-						updateTrails(currentFrame);
-					}
-				}
+				if (video && !video.paused) syncFrame();
 				animFrame = requestAnimationFrame(frame);
 			}
 			animFrame = requestAnimationFrame(frame);
@@ -126,8 +122,6 @@
 		if (!container) return;
 		const cW = container.clientWidth;
 		const aspect = annotations ? annotations.metadata.width / annotations.metadata.height : 16 / 9;
-		// Constrain the whole player to the actual rendered video width so the
-		// playback controls do not force extra horizontal space.
 		const maxH = Math.floor(window.innerHeight * 0.74);
 		const heightFromWidth = Math.round(cW / aspect);
 		if (heightFromWidth > maxH) {
@@ -144,18 +138,11 @@
 		duration = video.duration;
 		videoError = false;
 		updateSize();
+		syncFrame();
 	}
 
 	function onTimeUpdate() {
-		// Fallback for paused state / seeking — rAF loop handles playing
-		if (video.paused) {
-			currentTime = video.currentTime;
-			const newFrame = Math.floor(video.currentTime * fps);
-			if (newFrame !== currentFrame) {
-				currentFrame = newFrame;
-				updateTrails(currentFrame);
-			}
-		}
+		if (video.paused && !exporting) syncFrame();
 	}
 
 	function updateTrails(frame: number) {
@@ -193,13 +180,6 @@
 			video.pause();
 			playing = false;
 		}
-	}
-
-	function onSeek(e: Event) {
-		const input = e.target as HTMLInputElement;
-		video.currentTime = parseFloat(input.value);
-		// Reset court trails on seek
-		courtTrails = {};
 	}
 
 	function setRate(rate: number) {
@@ -269,18 +249,27 @@
 				framerate: exportFps
 			});
 
-			const wasPaused = video.paused;
-			video.pause();
-			const savedTime = video.currentTime;
+		const wasPaused = video.paused;
+		video.pause();
+		const savedTime = video.currentTime;
 
-			for (let f = 0; f < totalFrames; f++) {
-				video.currentTime = f / fps;
-				await new Promise<void>((r) => {
-					video.onseeked = () => r();
-				});
+		function waitForSeek(): Promise<void> {
+			return new Promise<void>((resolve) => {
+				video.addEventListener('seeked', () => resolve(), { once: true });
+			});
+		}
 
-				// Flush Svelte effects so CourtMinimap redraws for this frame
-				await tick();
+		const lastAnnotatedFrame = Math.max(
+			...Object.keys(annotations.frames).map(Number)
+		);
+		const exportTotal = Math.min(totalFrames, lastAnnotatedFrame + 1);
+
+		for (let f = 0; f < exportTotal; f++) {
+			const seekTime = Math.min(f / fps, video.duration - 0.001);
+			video.currentTime = seekTime;
+			await waitForSeek();
+
+			await tick();
 
 				// Compose frame onto offscreen canvas
 				offCtx.drawImage(video, 0, 0, natW, natH);
@@ -307,7 +296,7 @@
 					await new Promise<void>((r) => setTimeout(r, 0));
 				}
 
-				exportProgress = Math.round(((f + 1) / totalFrames) * 100);
+				exportProgress = Math.round(((f + 1) / exportTotal) * 100);
 			}
 
 			await encoder.flush();
@@ -340,9 +329,12 @@
 			<video
 				bind:this={video}
 				{src}
-				onloadedmetadata={onLoadedMetadata}
-				ontimeupdate={onTimeUpdate}
-				onplay={() => {
+			onloadedmetadata={onLoadedMetadata}
+			ontimeupdate={onTimeUpdate}
+			onseeked={() => {
+				if (!exporting) syncFrame();
+			}}
+			onplay={() => {
 					playing = true;
 				}}
 				onpause={() => {
@@ -351,8 +343,8 @@
 				onerror={() => {
 					videoError = true;
 				}}
-				class="w-full h-full"
-				preload="auto"
+			class="w-full h-full"
+			preload="auto"
 			>
 				<track kind="captions" />
 			</video>
@@ -434,17 +426,16 @@
 				{formatTime(currentTime)} / {formatTime(displayDuration)}
 			</span>
 
-			<!-- Seek + event timeline (shots + passes) -->
-			<div class="flex-1 flex flex-col gap-1 min-w-0 self-stretch justify-center">
-				<SeekBarTimeline {annotations} {currentTime} duration={displayDuration} />
-				<input
-					type="range"
-					min="0"
-					max={displayDuration || 1}
-					step="0.01"
-					value={currentTime}
-					oninput={onSeek}
-					class="w-full h-1 accent-[var(--color-accent)] cursor-pointer shrink-0"
+			<!-- Seek + event timeline -->
+			<div class="flex-1 min-w-0 self-stretch flex items-center">
+				<SeekBarTimeline
+					{annotations}
+					{currentTime}
+					duration={displayDuration}
+					onSeek={(t) => {
+						video.currentTime = t;
+						courtTrails = {};
+					}}
 				/>
 			</div>
 
