@@ -17,6 +17,7 @@ import logging
 import math
 import random
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 import torch
@@ -415,6 +416,7 @@ def train(
     skip_prob: float = 0.2,
     random_crop_ratio: float = 1.0,
     max_stack: int = 3,
+    class_weights_values: Sequence[float] = (1.0, 1.0, 10.0),
     cfg: AppConfig | None = None,
     device: str | None = None,
 ) -> ShotDetector:
@@ -493,8 +495,14 @@ def train(
         pin_memory=True,
     )
 
-    # ---- class weights (manual) ----
-    class_weights = torch.tensor([1.0, 1.0, 10.0], dtype=torch.float32, device=device)
+    # ---- class weights (manual / CLI-configurable) ----
+    if len(class_weights_values) != NUM_CLASSES:
+        raise ValueError(f"class_weights_values must have {NUM_CLASSES} elements, got {len(class_weights_values)}")
+    class_weights = torch.tensor(
+        [float(x) for x in class_weights_values],
+        dtype=torch.float32,
+        device=device,
+    )
     log.info("Class weights: %s", class_weights.cpu().numpy())
 
     # ---- model ----
@@ -633,6 +641,14 @@ def _parse_args():
     g.add_argument("--tau", type=float, default=4.0)
     g.add_argument("--val-fraction", type=float, default=0.2)
     g.add_argument("--seed", type=int, default=42)
+    g.add_argument(
+        "--class-weights",
+        type=float,
+        nargs=3,
+        metavar=("W_BG", "W_SHOT", "W_MAKE"),
+        default=(1.0, 1.0, 10.0),
+        help="Class weights for CE loss: background shot make",
+    )
 
     g = p.add_argument_group("data")
     g.add_argument("--court-type", type=str, default="nba", choices=["nba", "fiba"])
@@ -688,5 +704,6 @@ if __name__ == "__main__":
         skip_prob=args.skip_prob,
         random_crop_ratio=args.random_crop_ratio,
         max_stack=args.max_stack,
+        class_weights_values=args.class_weights,
         device=args.device,
     )

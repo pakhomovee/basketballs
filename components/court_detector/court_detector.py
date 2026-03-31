@@ -207,7 +207,11 @@ class CourtDetector:
 
     def extract_homographies_from_video_v1(self, video: cv2.VideoCapture, court_constants: CourtConstants):
         """
-        Extract homographies from video using optical flow.
+        Extract per-frame court homographies from a video by independently
+        running the court homography predictor on each frame.
+
+        This version does not use optical flow or temporal smoothing; each
+        frame is processed in isolation.
         """
         video.set(cv2.CAP_PROP_POS_FRAMES, 0)
         total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
