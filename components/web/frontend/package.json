@@ -25,6 +25,6 @@
 		"vite": "^6.0.0"
 	},
 	"dependencies": {
-		"webm-muxer": "^5.1.4"
+		"mp4-muxer": "^5.2.2"
 	}
 }

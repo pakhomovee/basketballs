@@ -57,15 +57,25 @@ def _sanitize_filename(name: str) -> str:
 
 
 @router.post("/videos", response_model=UploadResponse)
-async def upload_video(file: UploadFile, name: str | None = Form(default=None)):
+async def upload_video(
+    file: UploadFile,
+    name: str | None = Form(default=None),
+    tracker_type: str = Form(default="flow"),
+):
     if file.filename is None:
         raise HTTPException(400, "No filename provided")
+
+    if tracker_type not in ("flow", "hungarian", "appearance"):
+        raise HTTPException(400, "tracker_type must be 'flow', 'hungarian', or 'appearance'")
 
     jid = uuid.uuid4().hex[:12]
     safe_name = _sanitize_filename(file.filename)
     jdir = job_dir(jid)
     jdir.mkdir(parents=True, exist_ok=True)
     video_path = jdir / safe_name
+
+    # Persist job settings before enqueuing so the worker can read them.
+    (jdir / "settings.json").write_text(json.dumps({"tracker_type": tracker_type}), encoding="utf-8")
 
     size = 0
     with open(video_path, "wb") as f:

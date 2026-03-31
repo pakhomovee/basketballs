@@ -1,6 +1,54 @@
 /** Shared canvas drawing utilities for annotation overlays. */
 
-import type { FrameAnnotation, PlayerAnnotation, ToggleState } from './types';
+import type { AnnotationData, FrameAnnotation, PlayerAnnotation, ToggleState } from './types';
+
+function gcd(a: number, b: number): number {
+	let x = Math.abs(a);
+	let y = Math.abs(b);
+	while (y !== 0) {
+		const t = x % y;
+		x = y;
+		y = t;
+	}
+	return x || 1;
+}
+
+export function annotationFrameStep(annotations: AnnotationData): number {
+	const metaStep = Number(annotations.metadata.frame_step ?? 1);
+	if (Number.isFinite(metaStep) && metaStep >= 1) return metaStep;
+
+	const keys = Object.keys(annotations.frames)
+		.map(Number)
+		.filter((value) => Number.isFinite(value))
+		.sort((a, b) => a - b);
+	if (keys.length < 2) return 1;
+
+	let step = 0;
+	for (let i = 1; i < keys.length; i++) {
+		const diff = keys[i] - keys[i - 1];
+		if (diff <= 0) continue;
+		step = step === 0 ? diff : gcd(step, diff);
+		if (step === 1) return 1;
+	}
+	return step || 1;
+}
+
+/**
+ * Resolve the nearest annotated frame at or before `frame` (floor semantics).
+ *
+ * The source video has duplicate-frame pairs (30 unique fps encoded at 60 fps).
+ * frame_step=2 annotates every other pair, so annotations.frames has keys
+ * 0,2,4,... while the video has frames 0,1,2,3,...
+ * Walking backward means frames 0 and 1 both map to annotation "0",
+ * frames 2 and 3 both map to annotation "2", etc. — no flickering.
+ */
+export function resolveFrame(annotations: AnnotationData, frame: number): number {
+	if (String(frame) in annotations.frames) return frame;
+	for (let f = frame - 1; f >= Math.max(0, frame - 8); f--) {
+		if (String(f) in annotations.frames) return f;
+	}
+	return frame;
+}
 
 const TEAM_COLORS = ['#ff6b2b', '#3b82f6'];
 const TEAM_COLORS_ALPHA = ['rgba(255,107,43,0.3)', 'rgba(59,130,246,0.3)'];
@@ -19,12 +67,23 @@ const LIMBS: [number, number][] = [
 	[14, 16]
 ];
 
-export function playerColor(p: PlayerAnnotation, colorMode: 'team' | 'id', alpha = false): string {
-	if (p.player_id < 0) {
+/** Returns the ID to display/colour for a player given the current toggle state. */
+export function effectiveId(p: PlayerAnnotation, toggles: ToggleState): number {
+	return p.player_id;
+}
+
+export function playerColor(
+	p: PlayerAnnotation,
+	colorMode: 'team' | 'id',
+	toggles?: ToggleState,
+	alpha = false
+): string {
+	const id = toggles ? effectiveId(p, toggles) : p.player_id;
+	if (id < 0) {
 		return alpha ? 'rgba(140,140,140,0.3)' : '#8c8c8c';
 	}
 	if (colorMode === 'id') {
-		const hue = (Math.abs(p.player_id) * 137) % 360;
+		const hue = (Math.abs(id) * 137) % 360;
 		return alpha ? `hsla(${hue},70%,60%,0.3)` : `hsl(${hue},70%,60%)`;
 	}
 	const idx = p.team_id ?? 0;
@@ -79,7 +138,7 @@ export function drawAnnotations(
 	if (toggles.masks) {
 		for (const p of fd.players) {
 			if (!p.mask_polygon) continue;
-			if (p.player_id < 0 && toggles.colorMode !== 'id') continue;
+			if (effectiveId(p, toggles) < 0 && toggles.colorMode !== 'id') continue;
 			ctx.save();
 			// Clip to the player's bounding box so the mask never bleeds outside it.
 			if (p.bbox) {
@@ -88,7 +147,7 @@ export function drawAnnotations(
 				ctx.rect(bx1 * sx, by1 * sy, (bx2 - bx1) * sx, (by2 - by1) * sy);
 				ctx.clip();
 			}
-			ctx.fillStyle = playerColor(p, toggles.colorMode, true);
+			ctx.fillStyle = playerColor(p, toggles.colorMode, toggles, true);
 			ctx.beginPath();
 			for (let i = 0; i < p.mask_polygon.length; i++) {
 				const [x, y] = p.mask_polygon[i];
@@ -105,9 +164,9 @@ export function drawAnnotations(
 	if (toggles.bboxes) {
 		for (const p of fd.players) {
 			if (!p.bbox) continue;
-			if (p.player_id < 0 && toggles.colorMode !== 'id') continue;
+			if (effectiveId(p, toggles) < 0 && toggles.colorMode !== 'id') continue;
 			const [x1, y1, x2, y2] = p.bbox;
-			ctx.strokeStyle = playerColor(p, toggles.colorMode);
+			ctx.strokeStyle = playerColor(p, toggles.colorMode, toggles);
 			ctx.lineWidth = 2;
 			ctx.strokeRect(x1 * sx, y1 * sy, (x2 - x1) * sx, (y2 - y1) * sy);
 		}
@@ -127,7 +186,7 @@ export function drawAnnotations(
 			const [x1, y1, x2, y2] = b.bbox;
 			const cx = ((x1 + x2) / 2) * sx;
 			const cy = ((y1 + y2) / 2) * sy;
-			const r = Math.max(6, ((x2 - x1) / 2) * sx);
+			const r = Math.min(Math.max(4, ((x2 - x1) / 4) * sx), 12);
 			ctx.fillStyle = '#ff8c00';
 			ctx.beginPath();
 			ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -169,15 +228,17 @@ export function drawAnnotations(
 	// 6. Player ID labels with background pill
 	if (toggles.playerIds) {
 		for (const p of fd.players) {
-			if (!p.bbox || p.player_id < 0) continue;
+			if (!p.bbox) continue;
+			const id = effectiveId(p, toggles);
+			if (id < 0) continue;
 			const [x1, y1] = p.bbox;
 			const px = x1 * sx + 4;
 			const py = y1 * sy + 16;
 			ctx.font = 'bold 14px Inter, sans-serif';
 			ctx.textAlign = 'left';
-			const text = String(p.player_id);
+			const text = String(id);
 			const tw = ctx.measureText(text).width;
-			ctx.fillStyle = playerColor(p, toggles.colorMode);
+			ctx.fillStyle = playerColor(p, toggles.colorMode, toggles);
 			ctx.beginPath();
 			ctx.roundRect(px - 3, py - 13, tw + 6, 17, 3);
 			ctx.fill();

@@ -29,7 +29,8 @@
 	}
 
 	function isDisabled(key: ToggleKey): boolean {
-		return key === 'playerIds' && !toggles.bboxes;
+		if (key === 'playerIds' && !toggles.bboxes) return true;
+		return false;
 	}
 </script>
 

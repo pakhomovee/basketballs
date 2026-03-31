@@ -61,9 +61,19 @@ def _run_pipeline(job_id: str, video_path: str) -> None:
 
     cfg = load_default_config()
 
+    # Read tracker_type from job settings (written by upload route)
+    tracker_type = "flow"
+    settings_path = job_dir(job_id) / "settings.json"
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+            tracker_type = settings.get("tracker_type", "flow")
+        except Exception:
+            pass
+
     total_stages = PIPELINE_TOTAL_STAGES + 1
     stage_logger = _JobStageLogger(job_id, total_stages=total_stages)
-    result = run_pipeline(video_path, cfg, stage_logger=stage_logger)
+    result = run_pipeline(video_path, cfg, stage_logger=stage_logger, tracker_type=tracker_type)
 
     stage_logger.set_stage("Exporting annotations…", PIPELINE_TOTAL_STAGES)
     act_cfg = cfg.actions

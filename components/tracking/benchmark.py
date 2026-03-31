@@ -1,9 +1,14 @@
 """
 Tracking benchmark runner.
 
-Tests the tracker in isolation: GT bboxes from annotations are fed to
-FlowTracker (without detector), and the assigned track IDs are compared
+Tests a tracker in isolation: GT bboxes from annotations are fed to the
+chosen tracker (without detector), and the assigned track IDs are compared
 against the annotated ground truth IDs.
+
+Supported trackers:
+  - ``flow``       — FlowTracker (offline min-cost max-flow)
+  - ``hungarian``  — HungarianTracker (online) + tracklet stitching
+  - ``appearance`` — SimpleAppearanceTracker (online, Hungarian + EMA embeddings)
 
 Expected dataset layout::
 
@@ -22,6 +27,8 @@ Usage
 -----
     cd components
     python -m tracking.benchmark tracking_data/ [--iou-threshold 0.5]
+    python -m tracking.benchmark tracking_data/ --tracker hungarian
+    python -m tracking.benchmark tracking_data/ --tracker appearance
 """
 
 from __future__ import annotations
@@ -32,6 +39,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+
+from collections import Counter
 
 from common.classes.player import Player, PlayersDetections
 from common.classes import CourtType
@@ -269,6 +278,7 @@ def evaluate_sequence(
     court_type: CourtType = CourtType.NBA,
     use_court: bool = True,
     visual_path: str | None = None,
+    tracker_type: str = "flow",
 ) -> dict[str, float | int]:
     """
     Evaluate tracker performance on one sequence.
@@ -277,14 +287,22 @@ def evaluate_sequence(
     2. Build PlayersDetections from GT bboxes (IDs stripped).
     3. Optionally run court detection (provides homography for field-coord gating).
     4. Run embedding extraction on those boxes.
-    5. Run FlowTracker to assign track IDs.
+    5. Run tracker (FlowTracker or HungarianTracker+stitching) to assign track IDs.
     6. Remap pred IDs to the optimal bijection onto GT IDs, then compute metrics.
     7. Optionally write a side-by-side GT vs pred visualization video.
     """
+    from common.utils.models import ensure_models, get_model_paths
+    from reidentification.extract import extract_reid_embeddings
     from team_clustering.embedding import PlayerEmbedder
+    from tracking.appearance_tracker import SimpleAppearanceTracker
     from tracking.flow_tracker import FlowTracker
+    from tracking.hungarian_tracker import HungarianTracker
+    from tracking.stitching import stitch_tracklets
 
     img_w, img_h = _get_video_dims(video_path)
+    cap = cv2.VideoCapture(video_path)
+    video_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    cap.release()
 
     log.info("Loading GT annotations: %s", annotation_path)
     gt = load_yolo_mot(annotation_path, img_w, img_h)
@@ -307,9 +325,44 @@ def evaluate_sequence(
         log.info("Extracting embeddings...")
         PlayerEmbedder().extract_player_embeddings(vr, detections)
 
-    log.info("Running FlowTracker...")
-    tracker = FlowTracker(frame_width=float(img_w))
-    tracker.track(detections)
+    paths = get_model_paths(_cfg)
+    if Path(paths.reid).is_file():
+        log.info("Extracting ReID embeddings...")
+        from common.utils.utils import get_device
+
+        extract_reid_embeddings(video_path, detections, str(paths.reid), device=get_device())
+    else:
+        log.warning("ReID model not found at %s — tracker will use colour embeddings only", paths.reid)
+
+    if tracker_type == "hungarian":
+        log.info("Running HungarianTracker + stitching...")
+        tracker = HungarianTracker(cfg=_cfg, frame_width=float(img_w), fps=video_fps)
+        tracker.track(detections)
+
+        # Remove noise tracklets (same logic as run_pipeline.py)
+        min_track_hits = 4
+        hit_counts: Counter[int] = Counter()
+        for players in detections.values():
+            for player in players:
+                if player.player_id != -1:
+                    hit_counts[player.player_id] += 1
+        noise_ids = {pid for pid, cnt in hit_counts.items() if cnt < min_track_hits}
+        if noise_ids:
+            log.info("Dropping %d short tracklets (< %d hits)", len(noise_ids), min_track_hits)
+            for players in detections.values():
+                for player in players:
+                    if player.player_id in noise_ids:
+                        player.player_id = -1
+
+        stitch_tracklets(detections, fps=video_fps, cfg=_cfg)
+    elif tracker_type == "appearance":
+        log.info("Running SimpleAppearanceTracker...")
+        tracker = SimpleAppearanceTracker(num_tracks=_cfg.tracker.num_tracks, max_age=_cfg.tracker.max_skip)
+        tracker.track(detections)
+    else:
+        log.info("Running FlowTracker...")
+        tracker = FlowTracker(cfg=_cfg, frame_width=float(img_w), fps=video_fps)
+        tracker.track(detections)
 
     pred = _detections_to_pred(detections)
     pred_remapped = remap_pred_ids(gt, pred, iou_threshold)
@@ -330,6 +383,7 @@ def run_benchmark(
     court_type: CourtType = CourtType.NBA,
     use_court: bool = True,
     write_visuals: bool = True,
+    tracker_type: str = "flow",
 ) -> dict[str, float | int]:
     """
     Run tracker + evaluation on all sequences in *data_dir*.
@@ -371,6 +425,7 @@ def run_benchmark(
             court_type=court_type,
             use_court=use_court,
             visual_path=visual_path,
+            tracker_type=tracker_type,
         )
         all_results.append((name, metrics))
 
@@ -467,6 +522,12 @@ def main():
         action="store_true",
         help="Skip writing side-by-side GT vs pred visualization videos",
     )
+    parser.add_argument(
+        "--tracker",
+        choices=["flow", "hungarian", "appearance"],
+        default="flow",
+        help="Tracker to benchmark: 'flow' (offline MCMF), 'hungarian' (online), or 'appearance'",
+    )
     args = parser.parse_args()
 
     court_type = CourtType.NBA if args.court_type == "nba" else CourtType.FIBA
@@ -477,6 +538,7 @@ def main():
         court_type=court_type,
         use_court=not args.no_court,
         write_visuals=not args.no_visual,
+        tracker_type=args.tracker,
     )
 
 

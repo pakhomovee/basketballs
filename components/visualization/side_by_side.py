@@ -229,11 +229,19 @@ def make_side_by_side_video(
 
     try:
         frame_id = 0
+        # Build a set of frame IDs that have detections so we can skip
+        # frames that were dropped by the pipeline's frame_step filter.
+        sampled_frame_ids: set[int] | None = set(detections.keys()) if detections else None
         while True:
             ret_t, frame_top = cap_top.read()
             ret_b, frame_bottom = cap_bottom.read()
             if not ret_t or not ret_b:
                 break
+
+            # Skip frames that the pipeline never processed (frame_step filter).
+            if sampled_frame_ids is not None and frame_id not in sampled_frame_ids:
+                frame_id += 1
+                continue
 
             if frame_top.shape[:2] != (top_h, top_w):
                 frame_top = cv2.resize(frame_top, (target_w, top_h))

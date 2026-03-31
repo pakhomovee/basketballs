@@ -5,11 +5,14 @@ export interface VideoMeta {
 	width: number;
 	height: number;
 	total_frames: number;
+	frame_step?: number;
 	video_name: string;
 }
 
 export interface PlayerAnnotation {
 	player_id: number;
+	/** Pre-stitching tracker ID (equals player_id when stitching was not run). */
+	raw_player_id: number;
 	team_id: number | null;
 	bbox: [number, number, number, number] | null;
 	confidence: number | null;

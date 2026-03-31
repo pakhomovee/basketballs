@@ -12,10 +12,15 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
 	return res.json();
 }
 
-export async function uploadVideo(file: File, name?: string): Promise<string> {
+export async function uploadVideo(
+	file: File,
+	name?: string,
+	trackerType: 'flow' | 'hungarian' | 'appearance' = 'flow'
+): Promise<string> {
 	const form = new FormData();
 	form.append('file', file);
 	if (name && name.trim()) form.append('name', name.trim());
+	form.append('tracker_type', trackerType);
 	const data = await fetchJSON<{ job_id: string }>(`${BASE}/videos`, {
 		method: 'POST',
 		body: form

@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount } from 'svelte';
 	import type { AnnotationData, ToggleState, FrameAnnotation } from '$lib/types';
 	import AnnotationCanvas from './AnnotationCanvas.svelte';
 	import CourtMinimap from './CourtMinimap.svelte';
 	import SeekBarTimeline from './SeekBarTimeline.svelte';
-	import { Muxer, ArrayBufferTarget } from 'webm-muxer';
-	import { drawAnnotations } from '$lib/draw';
+	import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+	import { annotationFrameStep, drawAnnotations, resolveFrame } from '$lib/draw';
 
 	interface Props {
 		src: string;
@@ -54,6 +54,22 @@
 	// different duration (e.g. when the last N source frames are corrupt,
 	// or the container has a non-zero start PTS).
 	const fps = $derived(annotations?.metadata.fps ?? 30);
+
+	const annotationStep = $derived.by(() => {
+		if (!annotations) return 1;
+		return annotationFrameStep(annotations);
+	});
+
+	const displayFps = $derived.by(() => fps / annotationStep);
+
+	// Floor currentFrame to the nearest annotated frame (≤ currentFrame).
+	// With duplicate-pair source video (30fps→60fps) and frame_step=2, annotation
+	// keys are 0,2,4,... Raw video frames 0 and 1 both resolve to annotation "0",
+	// frames 2 and 3 resolve to "2", etc. — no flickering and no look-ahead.
+	const effectiveFrame = $derived.by(() => {
+		if (!annotations) return currentFrame;
+		return resolveFrame(annotations, currentFrame);
+	});
 
 	onMount(() => {
 		const observer = new ResizeObserver(() => updateSize());
@@ -147,7 +163,8 @@
 
 	function updateTrails(frame: number) {
 		if (!annotations) return;
-		const fd: FrameAnnotation | undefined = annotations.frames[String(frame)];
+		const ef = resolveFrame(annotations, frame);
+		const fd: FrameAnnotation | undefined = annotations.frames[String(ef)];
 		if (!fd) return;
 		const newTrails = { ...courtTrails };
 		for (const p of fd.players) {
@@ -221,8 +238,8 @@
 		try {
 			const natW = annotations.metadata.width;
 			const natH = annotations.metadata.height;
-			const totalFrames = annotations.metadata.total_frames;
-			const exportFps = fps;
+			const totalFrames = Math.ceil(annotations.metadata.total_frames / annotationStep);
+			const exportFps = displayFps;
 			const frameDurationUs = Math.round(1_000_000 / exportFps);
 
 			const offscreen = document.createElement('canvas');
@@ -230,11 +247,29 @@
 			offscreen.height = natH;
 			const offCtx = offscreen.getContext('2d')!;
 
-			// webm-muxer + VideoEncoder: assigns exact timestamps regardless of wall-clock time
+			// A detached video element — never added to the DOM, so the visible
+			// player is completely unaffected during the export loop.
+			const exportVid = document.createElement('video');
+			exportVid.src = src;
+			exportVid.muted = true;
+			exportVid.preload = 'auto';
+			await new Promise<void>((resolve, reject) => {
+				exportVid.onloadedmetadata = () => resolve();
+				exportVid.onerror = () => reject(new Error('Failed to load video for export'));
+			});
+
+			function waitForSeek(el: HTMLVideoElement): Promise<void> {
+				return new Promise<void>((resolve) => {
+					el.addEventListener('seeked', () => resolve(), { once: true });
+				});
+			}
+
+			// mp4-muxer + VideoEncoder: assigns exact timestamps regardless of wall-clock time
 			const target = new ArrayBufferTarget();
 			const muxer = new Muxer({
 				target,
-				video: { codec: 'V_VP9', width: natW, height: natH, frameRate: exportFps }
+				video: { codec: 'avc', width: natW, height: natH, frameRate: exportFps },
+				fastStart: 'in-memory'
 			});
 
 			const encoder = new VideoEncoder({
@@ -242,36 +277,28 @@
 				error: (e) => console.error('VideoEncoder error', e)
 			});
 			encoder.configure({
-				codec: 'vp09.00.10.08',
+				codec: 'avc1.640028',
 				width: natW,
 				height: natH,
 				bitrate: 8_000_000,
 				framerate: exportFps
 			});
 
-			const wasPaused = video.paused;
-			video.pause();
-			const savedTime = video.currentTime;
-
-			function waitForSeek(): Promise<void> {
-				return new Promise<void>((resolve) => {
-					video.addEventListener('seeked', () => resolve(), { once: true });
-				});
-			}
-
 			const lastAnnotatedFrame = Math.max(...Object.keys(annotations.frames).map(Number));
-			const exportTotal = Math.min(totalFrames, lastAnnotatedFrame + 1);
+			const exportTotal = Math.min(
+				totalFrames,
+				Math.floor(lastAnnotatedFrame / annotationStep) + 1
+			);
 
 			for (let f = 0; f < exportTotal; f++) {
-				const seekTime = Math.min(f / fps, video.duration - 0.001);
-				video.currentTime = seekTime;
-				await waitForSeek();
-
-				await tick();
+				const frameIdx = f * annotationStep;
+				const seekTime = Math.min(frameIdx / fps, exportVid.duration - 0.001);
+				exportVid.currentTime = seekTime;
+				await waitForSeek(exportVid);
 
 				// Compose frame onto offscreen canvas
-				offCtx.drawImage(video, 0, 0, natW, natH);
-				const fd = annotations.frames[String(f)];
+				offCtx.drawImage(exportVid, 0, 0, natW, natH);
+				const fd = annotations.frames[String(resolveFrame(annotations, frameIdx))];
 				if (fd) drawAnnotations(offCtx, fd, toggles, 1, 1);
 
 				if (toggles.minimap && minimapCanvas) {
@@ -300,14 +327,14 @@
 			await encoder.flush();
 			muxer.finalize();
 
-			video.currentTime = savedTime;
-			if (!wasPaused) video.play();
+			// Free the detached video element
+			exportVid.src = '';
 
-			const blob = new Blob([target.buffer], { type: 'video/webm' });
+			const blob = new Blob([target.buffer], { type: 'video/mp4' });
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
-			a.download = `export-${annotations.metadata.video_name.replace(/\.[^.]+$/, '')}.webm`;
+			a.download = `export-${annotations.metadata.video_name.replace(/\.[^.]+$/, '')}.mp4`;
 			a.click();
 			URL.revokeObjectURL(url);
 		} finally {
@@ -357,7 +384,7 @@
 			{:else if displayWidth > 0 && displayHeight > 0 && annotations}
 				<AnnotationCanvas
 					{annotations}
-					frame={currentFrame}
+					frame={effectiveFrame}
 					{toggles}
 					width={displayWidth}
 					height={displayHeight}
@@ -370,7 +397,7 @@
 
 			<CourtMinimap
 				{annotations}
-				frame={currentFrame}
+				frame={effectiveFrame}
 				visible={toggles.minimap}
 				colorMode={toggles.colorMode}
 				trails={toggles.speedTrails ? courtTrails : {}}

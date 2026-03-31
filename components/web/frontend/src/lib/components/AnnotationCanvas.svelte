@@ -18,9 +18,9 @@
 		if (!canvas) return;
 		const ctx = canvas.getContext('2d');
 		if (!ctx) return;
-		ctx.clearRect(0, 0, width, height);
 		const fd = annotations.frames[String(frame)];
 		if (!fd) return;
+		ctx.clearRect(0, 0, width, height);
 		drawAnnotations(
 			ctx,
 			fd,

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { AnnotationData, FrameAnnotation } from '$lib/types';
+
 	import { onMount } from 'svelte';
 
 	interface Props {
