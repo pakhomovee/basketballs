@@ -137,12 +137,14 @@
 		</div>
 	{/if}
 
-	<!-- Thumb -->
+	<!-- Thumb: center with transform (not Tailwind translate:) so older browsers / WebViews match dev -->
 	<div
-		class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-20 pointer-events-none
-			w-3.5 h-3.5 rounded-full bg-[var(--color-accent)] border-2 border-white shadow-md
-			transition-transform {dragging ? 'scale-125' : ''}"
+		class="absolute z-20 pointer-events-none h-3.5 w-3.5 rounded-full border-2 border-white shadow-md"
+		style:top="50%"
 		style:left="{pctTime(currentTime)}%"
+		style:transform={dragging ? 'translate(-50%, -50%) scale(1.25)' : 'translate(-50%, -50%)'}
+		style:transition="transform 0.15s ease-out"
+		style:background="var(--color-accent, #ff6b2b)"
 	></div>
 
 	<!-- Playhead line -->
