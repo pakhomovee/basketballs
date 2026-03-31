@@ -7,9 +7,8 @@
 	import VideoPlayer from '$lib/components/VideoPlayer.svelte';
 	import ControlPanel from '$lib/components/ControlPanel.svelte';
 	import PossessionPanel from '$lib/components/PossessionPanel.svelte';
-	import GameEventsPanel from '$lib/components/GameEventsPanel.svelte';
+	import TimelinePanel from '$lib/components/TimelinePanel.svelte';
 	import ReidMatrixPanel from '$lib/components/ReidMatrixPanel.svelte';
-	import CommentsPanel from '$lib/components/CommentsPanel.svelte';
 
 	let jobId = $derived($page.params.jobId);
 	let job = $state<Job | null>(null);
@@ -108,22 +107,27 @@
 			<div class="px-3 py-2.5 border-b border-[var(--color-border)]">
 				<PossessionPanel {annotations} {currentFrame} colorMode={toggles.colorMode} />
 			</div>
-			<!-- Comments -->
-			<div class="basis-[28%] min-h-0 shrink-0 border-b border-[var(--color-border)]">
-				<CommentsPanel jobId={jobId!} {currentTime} onSeek={handleSeek} />
-			</div>
-			<!-- Passes & shots (single scroll list) -->
-			<div class="flex-1 min-h-0 shrink-0 border-b border-[var(--color-border)] flex flex-col">
-				<GameEventsPanel
+			<!-- Timeline (passes, shots & comments) -->
+			<div
+				class="min-h-0 flex flex-col border-b border-[var(--color-border)] transition-all"
+				style:flex={toggles.reidMatrix ? '2 1 0%' : '1 1 0%'}
+			>
+				<TimelinePanel
+					jobId={jobId!}
 					passEvents={annotations?.pass_events ?? []}
 					shotEvents={annotations?.shot_events ?? []}
 					{currentFrame}
+					{currentTime}
 					fps={videoFps}
 					onSeek={handleSeek}
 				/>
 			</div>
-			<!-- ReID matrix (scrollable remainder) -->
-			<div class="flex-1 min-h-0 overflow-y-auto px-3 py-2">
+			<!-- ReID matrix (collapses to zero when hidden) -->
+			<div
+				class="min-h-0 overflow-y-auto px-3 py-2 transition-all"
+				style:flex={toggles.reidMatrix ? '1 1 0%' : '0 0 0px'}
+				style:overflow-y={toggles.reidMatrix ? 'auto' : 'hidden'}
+			>
 				<ReidMatrixPanel matrix={reidMatrix} visible={toggles.reidMatrix} />
 			</div>
 		</div>
