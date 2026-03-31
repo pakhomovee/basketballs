@@ -102,7 +102,7 @@ models:
   wasb_filename: "wasb_basketball_best.pth.tar"
   wasb_url: "https://disk.yandex.ru/d/JZQN5HEOKOegog"
   shot_detection_filename: "shot_detection_model.pt"
-  shot_detection_url: "https://disk.yandex.ru/d/h2kTEC7_I7WsQg"
+  shot_detection_url: "https://disk.yandex.ru/d/Z0NBNztwuV4Tfw"
 
 benchmarks:
   tracking:

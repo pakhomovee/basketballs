@@ -17,6 +17,7 @@ import logging
 import math
 import random
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 import torch
@@ -77,8 +78,24 @@ def shot_events_from_frame_labels(labels: np.ndarray) -> list[ShotEvent]:
         seg = y[start : end + 1]
         make_rel = np.flatnonzero(seg == LABEL_MAKE)
         if make_rel.size > 0:
-            ms = start + int(make_rel.min())
-            me = start + int(make_rel.max())
+            # Choose the longest contiguous MAKE sub-segment inside this shot event.
+            best_s = int(make_rel[0])
+            best_e = int(make_rel[0])
+            cur_s = int(make_rel[0])
+            cur_e = int(make_rel[0])
+            for r in make_rel[1:]:
+                rr = int(r)
+                if rr == cur_e + 1:
+                    cur_e = rr
+                else:
+                    if (cur_e - cur_s) > (best_e - best_s):
+                        best_s, best_e = cur_s, cur_e
+                    cur_s = rr
+                    cur_e = rr
+            if (cur_e - cur_s) > (best_e - best_s):
+                best_s, best_e = cur_s, cur_e
+            ms = start + best_s
+            me = start + best_e
             out.append(
                 ShotEvent(
                     frame_start=start,
@@ -320,19 +337,6 @@ class ShotDetector:
 # ---------------------------------------------------------------------------
 
 
-def _compute_class_weights(dataset: ShotDataset) -> torch.Tensor:
-    """Inverse-frequency class weights computed over the full dataset."""
-    counts = np.zeros(NUM_CLASSES, dtype=np.float64)
-    for i in range(len(dataset)):
-        _, labels, T = dataset[i]
-        for c in range(NUM_CLASSES):
-            counts[c] += (labels[:T] == c).sum().item()
-
-    total = counts.sum()
-    weights = np.where(counts > 0, total / (NUM_CLASSES * counts), 1.0)
-    return torch.from_numpy(weights).float()
-
-
 @torch.no_grad()
 def _evaluate(
     model: MultiStageTCN,
@@ -412,6 +416,7 @@ def train(
     skip_prob: float = 0.2,
     random_crop_ratio: float = 1.0,
     max_stack: int = 3,
+    class_weights_values: Sequence[float] = (1.0, 1.0, 10.0),
     cfg: AppConfig | None = None,
     device: str | None = None,
 ) -> ShotDetector:
@@ -490,19 +495,14 @@ def train(
         pin_memory=True,
     )
 
-    # ---- class weights (full timeline; skip_prob would bias frequencies) ----
-    log.info("Computing class weights …")
-    weights_count_ds = ShotDataset(
-        features_dir,
-        court_type=ct,
-        fliplr=False,
-        random_scale=1.0,
-        random_shift=0.0,
-        random_rotate=0.0,
-        skip_prob=0.0,
-        random_crop_ratio=1.0,
+    # ---- class weights (manual / CLI-configurable) ----
+    if len(class_weights_values) != NUM_CLASSES:
+        raise ValueError(f"class_weights_values must have {NUM_CLASSES} elements, got {len(class_weights_values)}")
+    class_weights = torch.tensor(
+        [float(x) for x in class_weights_values],
+        dtype=torch.float32,
+        device=device,
     )
-    class_weights = _compute_class_weights(Subset(weights_count_ds, train_indices)).to(device)
     log.info("Class weights: %s", class_weights.cpu().numpy())
 
     # ---- model ----
@@ -641,6 +641,14 @@ def _parse_args():
     g.add_argument("--tau", type=float, default=4.0)
     g.add_argument("--val-fraction", type=float, default=0.2)
     g.add_argument("--seed", type=int, default=42)
+    g.add_argument(
+        "--class-weights",
+        type=float,
+        nargs=3,
+        metavar=("W_BG", "W_SHOT", "W_MAKE"),
+        default=(1.0, 1.0, 10.0),
+        help="Class weights for CE loss: background shot make",
+    )
 
     g = p.add_argument_group("data")
     g.add_argument("--court-type", type=str, default="nba", choices=["nba", "fiba"])
@@ -696,5 +704,6 @@ if __name__ == "__main__":
         skip_prob=args.skip_prob,
         random_crop_ratio=args.random_crop_ratio,
         max_stack=args.max_stack,
+        class_weights_values=args.class_weights,
         device=args.device,
     )

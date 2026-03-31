@@ -92,6 +92,18 @@ def main():
         type=Path,
         help="Run inference on frames from a video file",
     )
+    parser.add_argument(
+        "--video-out",
+        type=Path,
+        help="Path to output visualization video (used with --video)",
+    )
+    parser.add_argument(
+        "--homography-version",
+        type=int,
+        choices=[1, 2],
+        default=2,
+        help="Homography extraction pipeline version for --video (1 or 2)",
+    )
     args = parser.parse_args()
 
     if args.deepsportradar:
@@ -453,20 +465,20 @@ def run_roboflow(args):
 
 
 def run_video(args):
+    if args.video_out is None:
+        raise ValueError("--video-out is required when --video is used")
+
     # Detector and court constants
     detector = CourtDetector(str(args.model), cfg=load_default_config())
     court_constants = CourtConstants(CourtType.NBA)
 
-    # Pre-compute homographies, keypoint detections and per-frame losses
-    # homographies, frames_sizes, keypoints_detections, losses = detector.extract_homographies_from_video(
-    #     str(args.video), court_constants
-    # )
-
     vr = VideoReader(str(args.video))
-    homographies, keypoints_detections, losses = detector.extract_homographies_from_video_v2(vr, court_constants)
-    # losses = None
+    if args.homography_version == 1:
+        homographies, keypoints_detections, losses = detector.extract_homographies_from_video_v1(vr, court_constants)
+    else:
+        homographies, keypoints_detections, losses = detector.extract_homographies_from_video_v2(vr, court_constants)
 
-    # Rewind for visualization
+    # Rewind for visualization rendering
     vr.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     # Load court model image (NBA court)
@@ -486,25 +498,27 @@ def run_video(args):
         (255, 255, 0),
     ]
 
-    frame_idx = 0
-    window_name = f"Court visualization - {args.video.name}"
+    frame_w = int(vr.get(cv2.CAP_PROP_FRAME_WIDTH) or vr.width)
+    frame_h = int(vr.get(cv2.CAP_PROP_FRAME_HEIGHT) or vr.height)
+    fps = float(vr.get(cv2.CAP_PROP_FPS) or 25.0)
+    out_path = Path(args.video_out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    writer = cv2.VideoWriter(
+        str(out_path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (frame_w, frame_h),
+    )
+    if not writer.isOpened():
+        raise RuntimeError(f"Cannot open video writer for output: {out_path}")
 
-    while True:
-        # Clamp frame index to valid range
-        if frame_idx < 0:
-            frame_idx = 0
-        if frame_idx >= len(homographies):
-            frame_idx = len(homographies) - 1
-
-        # Seek to the desired frame and read it
-        vr.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+    total = min(len(homographies), int(vr.get(cv2.CAP_PROP_FRAME_COUNT) or len(homographies)))
+    for frame_idx in range(total):
         ret, frame_bgr = vr.read()
         if not ret:
             break
 
         H = homographies[frame_idx]
-        frame_w = int(vr.get(cv2.CAP_PROP_FRAME_WIDTH) or vr.width)
-        frame_h = int(vr.get(cv2.CAP_PROP_FRAME_HEIGHT) or vr.height)
         pred_centers, pred_cls = keypoints_detections[frame_idx]
 
         # Prepare base frame
@@ -558,26 +572,36 @@ def run_video(args):
                     cv2.LINE_AA,
                 )
 
-        # Show frame and print current loss
-        cv2.imshow(window_name, frame_vis)
+        # Draw frame number in the top-left corner.
+        cv2.putText(
+            frame_vis,
+            f"frame: {frame_idx}",
+            (12, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.85,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame_vis,
+            f"frame: {frame_idx}",
+            (12, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.85,
+            (0, 0, 0),
+            1,
+            cv2.LINE_AA,
+        )
+
+        # Save frame and print current loss
+        writer.write(frame_vis)
         if losses is not None and len(losses) > frame_idx:
             print(f"Frame {frame_idx}: loss = {float(losses[frame_idx]):.4f}")
 
-        # Left/right arrows to move backward/forward, q/ESC to exit
-        key = cv2.waitKey(0) & 0xFF
-        if key == 27 or key == ord("q"):
-            break
-        # OpenCV arrow key codes: left=81, up=82, right=83, down=84 (on most platforms)
-        if key == 81:  # left arrow
-            frame_idx -= 1
-        elif key == 83:  # right arrow
-            frame_idx += 1
-        else:
-            # Any other key: stay on the same frame
-            continue
-
+    writer.release()
     vr.release()
-    cv2.destroyWindow(window_name)
+    print(f"Saved visualization video to {out_path}")
 
 
 if __name__ == "__main__":
