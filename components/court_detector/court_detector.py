@@ -72,7 +72,7 @@ class CourtDetector:
         batch: int = 8,
         imgsz: int = 640,
         save=True,
-        lr0=0.01,
+        lr0=0.1,
         lrf=0.001,
     ):
         if need_prepare_dataset:
@@ -95,11 +95,11 @@ class CourtDetector:
             lr0=lr0,
             lrf=lrf,
             perspective=0.0007,
-            bgr=0.5,
+            hsv_h=0.5,
             workers=10,
             optimizer="sgd",
             close_mosaic=0,
-            fliplr=0,
+            fliplr=0.5,
             save_dir=str(save_dir),
         )
         best_model_path = str(save_dir / "weights" / "best.pt")
@@ -146,7 +146,7 @@ class CourtDetector:
         frame_points = np.array(frame_points)
         court_points = np.array(court_points)
         try:
-            H, mask = cv2.findHomography(frame_points, court_points, method=cv2.RANSAC)
+            H, mask = cv2.findHomography(frame_points, court_points, method=cv2.RANSAC, confidence=0.999)
         except cv2.error:
             return pred_centers, pred_cls, pred_confs, None
         return pred_centers, pred_cls, pred_confs, H
@@ -204,6 +204,24 @@ class CourtDetector:
                 Hv = H @ v
                 res = res + 1 - self.cosine_similarity(Hv, v)
         return res
+
+    def extract_homographies_from_video_v1(self, video: cv2.VideoCapture, court_constants: CourtConstants):
+        """
+        Extract homographies from video using optical flow.
+        """
+        video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+        homographies = []
+        keypoints_detections = []
+        for frame_idx in range(total_frames):
+            ret, frame_bgr = video.read()
+            if not ret:
+                break
+            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            pred_centers, pred_cls, pred_confs, homography = self.predict_court_homography(frame_rgb, court_constants)
+            homographies.append(homography)
+            keypoints_detections.append((pred_centers, pred_cls))
+        return homographies, keypoints_detections, None
 
     def extract_homographies_from_video_v2(
         self,
