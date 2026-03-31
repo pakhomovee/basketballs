@@ -49,7 +49,7 @@ class DetectorConfig(BaseModel):
     ocr_conf_threshold: float = 0.999
     #: PARSeq jersey OCR: augmented forward passes (max 5 distinct crops in ``_augment_crop``).
     number_recognizer_n_votes: int = Field(default=5, ge=1, le=5)
-    #: ``unanimous``: keep digit only if every pass agrees; 
+    #: ``unanimous``: keep digit only if every pass agrees;
     #: ``majority``: strict majority among passes that meet ``ocr_conf_threshold``.
     number_recognizer_vote_mode: Literal["unanimous", "majority"] = "unanimous"
 
