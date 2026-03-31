@@ -91,12 +91,15 @@ def _match_segments_iou(
         best_i = -1
         best_iou = 0.0
         for gi, gt in enumerate(gt_segments):
+            if gt_used[gi]:
+                continue
             iou = _segment_iou(pred, gt)
             if iou > best_iou:
                 best_iou = iou
                 best_i = gi
         if best_i >= 0 and (best_iou >= thr) and not gt_used[best_i]:
             tp += 1
+            gt_used[best_i] = True
         else:
             fp += 1
 
