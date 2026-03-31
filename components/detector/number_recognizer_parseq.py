@@ -9,8 +9,9 @@ import os
 import re
 import string
 import sys
+from collections import Counter
 from pathlib import Path
-from typing import List
+from typing import List, Literal
 
 import cv2
 import numpy as np
@@ -79,12 +80,8 @@ def _preprocess_crop(crop: np.ndarray) -> np.ndarray:
     return img
 
 
-# Number of augmented runs; recognition accepted only when all runs agree
-_N_VOTES = 5
-
-
 def _augment_crop(crop: np.ndarray, variant: int) -> np.ndarray:
-    """Apply a deterministic augmentation variant (0..4) for voting."""
+    """Apply a deterministic augmentation variant ``variant`` in ``0 .. n_votes-1`` (max 5 distinct recipes)."""
     if crop.size == 0:
         return crop
     out = crop.copy()
@@ -110,6 +107,26 @@ def _augment_crop(crop: np.ndarray, variant: int) -> np.ndarray:
         out = np.clip(out, 0, 255).astype(np.uint8)
         return out
     return out
+
+
+def _majority_digit(votes: list[int], confs: list[float]) -> tuple[int | None, float | None]:
+    """
+    Strict majority among successful votes (same length lists).
+    Returns (digit, mean confidence over votes for that digit) or (None, None) if ambiguous / below threshold.
+    """
+    if not votes or len(votes) != len(confs):
+        return None, None
+    total = len(votes)
+    need = total // 2 + 1
+    c = Counter(votes)
+    ranked = c.most_common()
+    best_num, best_count = ranked[0]
+    if best_count < need:
+        return None, None
+    if len(ranked) > 1 and ranked[1][1] == best_count:
+        return None, None
+    win_confs = [confs[i] for i, v in enumerate(votes) if v == best_num]
+    return best_num, sum(win_confs) / len(win_confs)
 
 
 def _parse_digit(text: str) -> int | None:
@@ -156,6 +173,8 @@ def recognize_numbers_in_frame(
     *,
     padding: int = 5,
     ocr_conf_threshold: float = 0.999,
+    n_votes: int = 5,
+    vote_mode: Literal["unanimous", "majority"] = "unanimous",
     checkpoint_path: str | Path | None = None,
 ) -> List[Number]:
     """
@@ -166,6 +185,9 @@ def recognize_numbers_in_frame(
         number_detections: list of detections with bbox [x1, y1, x2, y2].
         padding: pixels to expand bbox when cropping (typically 2–5).
         ocr_conf_threshold: minimum confidence (0.0–1.0). Below this, num is not set.
+        n_votes: number of augmented runs (1–5).
+        vote_mode: ``unanimous`` — all runs must agree; ``majority`` — strict majority among runs
+            that pass ``ocr_conf_threshold``.
         checkpoint_path: path to parseq checkpoint (e.g. models/parseq.pt). Default: REPO_ROOT/models/parseq.pt.
 
     Returns:
@@ -173,6 +195,8 @@ def recognize_numbers_in_frame(
     """
     global _model, _transform
     _get_model(checkpoint_path)
+
+    nv = max(1, min(int(n_votes), 5))
 
     h, w = frame.shape[:2]
     for i, number in enumerate(number_detections):
@@ -187,25 +211,40 @@ def recognize_numbers_in_frame(
         crop = frame[y1:y2, x1:x2]
         preprocessed = _preprocess_crop(crop)
         try:
-            votes: list[int | None] = []
+            votes: list[int] = []
             confs: list[float] = []
-            for v in range(_N_VOTES):
-                aug = _augment_crop(preprocessed, v)
-                pred_str, conf = _predict_crop(_model, _transform, aug, _device)
-                parsed = _parse_digit(pred_str)
-                if parsed is not None and conf >= ocr_conf_threshold:
-                    votes.append(parsed)
-                    confs.append(conf)
+            if vote_mode == "majority":
+                for v in range(nv):
+                    aug = _augment_crop(preprocessed, v)
+                    pred_str, conf = _predict_crop(_model, _transform, aug, _device)
+                    parsed = _parse_digit(pred_str)
+                    if parsed is not None and conf >= ocr_conf_threshold:
+                        votes.append(parsed)
+                        confs.append(conf)
+                num_maj, conf_maj = _majority_digit(votes, confs)
+                if num_maj is None:
+                    number.num = None
                 else:
-                    break
-                if votes[-1] != votes[0]:
-                    break
-
-            if len(votes) != _N_VOTES or not all(x is not None for x in votes) or len(set(votes)) != 1:
-                number.num = None
+                    number.num = num_maj
+                    number.confidence = conf_maj
             else:
-                number.num = votes[0]
-                number.confidence = sum(confs) / len(confs)
+                for v in range(nv):
+                    aug = _augment_crop(preprocessed, v)
+                    pred_str, conf = _predict_crop(_model, _transform, aug, _device)
+                    parsed = _parse_digit(pred_str)
+                    if parsed is not None and conf >= ocr_conf_threshold:
+                        votes.append(parsed)
+                        confs.append(conf)
+                    else:
+                        break
+                    if len(votes) >= 2 and votes[-1] != votes[0]:
+                        break
+
+                if len(votes) != nv or len(set(votes)) != 1:
+                    number.num = None
+                else:
+                    number.num = votes[0]
+                    number.confidence = sum(confs) / len(confs)
         except Exception:
             number.num = None
     return number_detections

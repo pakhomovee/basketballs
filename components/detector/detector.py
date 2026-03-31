@@ -6,7 +6,7 @@ from common.distances import bbox_iou, bbox_overlap_ratio
 from ultralytics import YOLO
 import numpy as np
 import cv2
-from typing import List
+from typing import List, Literal
 from common.classes.player import PlayersDetections, Player
 from common.classes.referee import RefereesDetections, Referee
 from common.classes.number import NumberDetections, Number
@@ -247,6 +247,8 @@ def get_frame_number_detections(
     conf_threshold: float = 0.5,
     nms_iou_threshold: float = 0.9,
     ocr_conf_threshold: float = 0.999,
+    number_recognizer_n_votes: int = 5,
+    number_recognizer_vote_mode: Literal["unanimous", "majority"] = "unanimous",
 ) -> list[Number]:
     number_detections = [d for d in frame_detections.detections if d.class_id == 1 and d.confidence >= conf_threshold]
     number_detections = _nms_detections(number_detections, iou_threshold=nms_iou_threshold)
@@ -256,5 +258,7 @@ def get_frame_number_detections(
             frame,
             number_detections,
             ocr_conf_threshold=ocr_conf_threshold,
+            n_votes=number_recognizer_n_votes,
+            vote_mode=number_recognizer_vote_mode,
         )
     return number_detections
