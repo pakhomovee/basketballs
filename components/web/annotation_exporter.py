@@ -10,6 +10,7 @@ import numpy as np
 from common.classes.player import Player, PlayersDetections
 from common.classes.ball import Ball, BallDetections
 from common.classes.pass_event import PassEvent
+from common.classes.possession_segment import PossessionSegment
 from common.classes.shot_event import ShotEvent
 from common.distances import cosine_dist
 
@@ -57,7 +58,8 @@ def _serialize_player(player: Player) -> dict:
         "speed": _to_json_safe(player.speed),
         "skeleton": skeleton,
         "mask_polygon": mask_polygon,
-        "is_possession": bool(getattr(player, "is_possession", False)),
+        "is_possession": (False if player.player_id == -1 else bool(getattr(player, "is_possession", False))),
+        "track_number": player.track_number,
     }
 
 
@@ -101,26 +103,73 @@ def _compute_cross_frame_reid_matrix(
     return {"row_ids": row_ids, "col_ids": col_ids, "distances": distances}
 
 
-def _serialize_pass_event(event: PassEvent, fps: float) -> dict:
+def _serialize_pass_event(event: PassEvent, fps: float, track_numbers: dict[int, int]) -> dict:
     return {
         "frame_start": event.frame_start,
         "frame_end": event.frame_end,
         "from_player_id": event.from_player_id,
         "to_player_id": event.to_player_id,
+        "from_track_number": track_numbers.get(event.from_player_id),
+        "to_track_number": track_numbers.get(event.to_player_id),
         "team_id": event.team_id,
         "timestamp_sec": round(event.frame_end / fps, 2) if fps > 0 else 0,
     }
 
 
-def _serialize_shot_event(event: ShotEvent, fps: float) -> dict:
+def _find_shooter(
+    shot: ShotEvent,
+    segments: list[PossessionSegment],
+    fps: float,
+    track_numbers: dict[int, int],
+    team_ids: dict[int, int],
+    max_back_sec: float = 0.5,
+    max_forward_sec: float = 0.25,
+) -> dict:
+    """Find the player whose possession end is closest to the shot start.
+
+    Uses asymmetric window: ``max_back_sec`` when possession ended before
+    the shot, ``max_forward_sec`` when it ended after (overlap).
+    """
+    max_back = int(max_back_sec * fps) if fps > 0 else 15
+    max_fwd = int(max_forward_sec * fps) if fps > 0 else 8
+    best_pid: int | None = None
+    best_dist: int = max(max_back, max_fwd) + 1
+    for seg in segments:
+        diff = shot.frame_start - seg.end_frame  # positive = possession ended before shot
+        if diff >= 0 and diff > max_back:
+            continue
+        if diff < 0 and -diff > max_fwd:
+            continue
+        dist = abs(diff)
+        if dist < best_dist:
+            best_dist = dist
+            best_pid = seg.owner_player_id
+    if best_pid is None:
+        return {"player_id": None, "track_number": None, "team_id": None}
+    return {"player_id": best_pid, "track_number": track_numbers.get(best_pid), "team_id": team_ids.get(best_pid)}
+
+
+def _serialize_shot_event(
+    event: ShotEvent,
+    fps: float,
+    segments: list[PossessionSegment],
+    track_numbers: dict[int, int],
+    team_ids: dict[int, int],
+    max_back_sec: float = 0.5,
+    max_forward_sec: float = 0.25,
+) -> dict:
     ts_start = round(event.frame_start / fps, 2) if fps > 0 else 0.0
     ts_end = round(event.frame_end / fps, 2) if fps > 0 else 0.0
+    shooter = _find_shooter(event, segments, fps, track_numbers, team_ids, max_back_sec, max_forward_sec)
     out: dict = {
         "frame_start": event.frame_start,
         "frame_end": event.frame_end,
         "is_make": event.is_make,
         "timestamp_start_sec": ts_start,
         "timestamp_end_sec": ts_end,
+        "shooter_player_id": shooter["player_id"],
+        "shooter_track_number": shooter["track_number"],
+        "shooter_team_id": shooter["team_id"],
     }
     if event.is_make and event.make_start is not None and event.make_end is not None:
         out["make_start"] = event.make_start
@@ -135,12 +184,35 @@ def _serialize_shot_event(event: ShotEvent, fps: float) -> dict:
     return out
 
 
+def _build_track_number_map(players_detections: PlayersDetections) -> dict[int, int]:
+    """Build player_id -> track_number lookup from already-propagated detections."""
+    tn: dict[int, int] = {}
+    for players in players_detections.values():
+        for p in players:
+            if p.player_id >= 0 and p.track_number is not None and p.player_id not in tn:
+                tn[p.player_id] = p.track_number
+    return tn
+
+
+def _build_team_id_map(players_detections: PlayersDetections) -> dict[int, int]:
+    """Build player_id -> team_id lookup (first seen team_id wins)."""
+    tm: dict[int, int] = {}
+    for players in players_detections.values():
+        for p in players:
+            if p.player_id >= 0 and p.team_id is not None and p.player_id not in tm:
+                tm[p.player_id] = p.team_id
+    return tm
+
+
 def export_annotations(
     players_detections: PlayersDetections,
     ball_detections: BallDetections | None,
     video_meta: dict,
     pass_events: list[PassEvent] | None = None,
     shot_events: list[ShotEvent] | None = None,
+    possession_segments: list[PossessionSegment] | None = None,
+    shot_attribution_back_sec: float = 0.5,
+    shot_attribution_forward_sec: float = 0.25,
 ) -> dict:
     """Build a complete annotation dict ready for JSON serialization."""
     all_frame_ids = sorted(set(players_detections.keys()) | set((ball_detections or {}).keys()))
@@ -162,8 +234,16 @@ def export_annotations(
         prev_players = curr_players
 
     fps = video_meta.get("fps", 25.0)
-    serialized_passes = [_serialize_pass_event(e, fps) for e in (pass_events or [])]
-    serialized_shots = [_serialize_shot_event(e, fps) for e in (shot_events or [])]
+    track_numbers = _build_track_number_map(players_detections)
+    team_ids = _build_team_id_map(players_detections)
+    segments = possession_segments or []
+    serialized_passes = [_serialize_pass_event(e, fps, track_numbers) for e in (pass_events or [])]
+    serialized_shots = [
+        _serialize_shot_event(
+            e, fps, segments, track_numbers, team_ids, shot_attribution_back_sec, shot_attribution_forward_sec
+        )
+        for e in (shot_events or [])
+    ]
 
     return {
         "metadata": video_meta,

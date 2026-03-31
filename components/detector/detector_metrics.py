@@ -931,6 +931,357 @@ def print_rim_metrics(metrics: RimDetectionMetrics) -> None:
     _print_detection_metrics(metrics, "rim")
 
 
+class YoloBuiltinMetrics(NamedTuple):
+    """Metrics computed with ultralytics ap_per_class (same algorithm as model.val)."""
+
+    precision: float
+    recall: float
+    f1: float
+    map50: float
+    map50_95: float
+    n_images: int
+    n_gt: int
+    n_pred: int
+
+
+def compute_player_metrics_yolo_builtin(
+    dataset_path: str | Path,
+    model_path: str | Path | None = None,
+    split: str = "test",
+    conf_threshold: float = 0.001,
+) -> YoloBuiltinMetrics:
+    """
+    Compute player metrics exactly as YOLO does, but using our detection pipeline.
+
+    Runs the multi-class detector on each image, extracts player boxes via
+    ``get_frame_players_detections`` (classes 2-8, NMS, cap at 10), then evaluates
+    against GT from a single-class player dataset using ``ap_per_class`` and
+    ``match_predictions`` from ``ultralytics.utils.metrics``.
+    """
+    import torch
+    from ultralytics.utils.metrics import ap_per_class, box_iou
+
+    data_yaml = _resolve_dataset_path(dataset_path)
+    root = data_yaml.parent.resolve()
+    split_images_dir = root / split / "images"
+    split_labels_dir = root / split / "labels"
+    if not split_images_dir.is_dir() or not split_labels_dir.is_dir():
+        raise FileNotFoundError(f"{split}/images or {split}/labels not found in dataset: {root}")
+
+    ext = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+    image_paths = sorted(p for p in split_images_dir.iterdir() if p.suffix.lower() in ext)
+    if not image_paths:
+        raise FileNotFoundError(f"No images in {split_images_dir}")
+
+    if model_path is not None:
+        detector = Detector(model_path=str(model_path), conf_threshold=conf_threshold)
+    else:
+        detector = Detector(conf_threshold=conf_threshold)
+
+    iou_thresholds = torch.linspace(0.5, 0.95, 10)
+
+    all_tp: list[torch.Tensor] = []
+    all_conf: list[torch.Tensor] = []
+    all_pred_cls: list[torch.Tensor] = []
+    all_target_cls: list[torch.Tensor] = []
+    total_pred = 0
+
+    for img_path in tqdm(image_paths, desc="Metrics (YOLO built-in): test images", unit="img"):
+        lbl_path = split_labels_dir / (img_path.stem + ".txt")
+        img = cv2.imread(str(img_path))
+        if img is None:
+            continue
+        h, w = img.shape[:2]
+
+        gt_boxes_list: list[list[float]] = []
+        if lbl_path.is_file():
+            with open(lbl_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) < 5:
+                        continue
+                    try:
+                        x_c, y_c, bw, bh = map(float, parts[1:5])
+                    except (ValueError, IndexError):
+                        continue
+                    x1 = (x_c - bw / 2) * w
+                    y1 = (y_c - bh / 2) * h
+                    x2 = (x_c + bw / 2) * w
+                    y2 = (y_c + bh / 2) * h
+                    gt_boxes_list.append([x1, y1, x2, y2])
+
+        detections = detector.detect_frame(img)
+        frame_detections = FrameDetections(frame_id=0, detections=detections)
+        players = get_frame_players_detections(frame_detections, conf_threshold=conf_threshold)
+
+        n_gt = len(gt_boxes_list)
+        n_pred = len(players)
+        total_pred += n_pred
+
+        if n_gt > 0:
+            all_target_cls.append(torch.zeros(n_gt))
+
+        if n_pred == 0:
+            continue
+
+        pred_boxes = torch.tensor(
+            [[p.bbox[0], p.bbox[1], p.bbox[2], p.bbox[3]] for p in players],
+            dtype=torch.float32,
+        )
+        pred_conf = torch.tensor([p.confidence for p in players], dtype=torch.float32)
+        pred_cls = torch.zeros(n_pred)
+
+        if n_gt == 0:
+            all_tp.append(torch.zeros(n_pred, len(iou_thresholds), dtype=torch.bool))
+            all_conf.append(pred_conf)
+            all_pred_cls.append(pred_cls)
+            continue
+
+        gt_boxes = torch.tensor(gt_boxes_list, dtype=torch.float32)
+        gt_cls = torch.zeros(n_gt)
+
+        # box_iou returns (n_pred, n_gt); YOLO matching expects (n_gt, n_pred)
+        iou_matrix = box_iou(gt_boxes, pred_boxes)
+
+        correct = np.zeros((n_pred, len(iou_thresholds)), dtype=bool)
+        correct_class = (gt_cls[:, None] == pred_cls).cpu().numpy()
+        iou_np = (iou_matrix * torch.tensor(correct_class, dtype=iou_matrix.dtype)).cpu().numpy()
+        for t_idx, threshold in enumerate(iou_thresholds.tolist()):
+            matches = np.nonzero(iou_np >= threshold)
+            matches = np.array(matches).T
+            if matches.shape[0]:
+                if matches.shape[0] > 1:
+                    matches = matches[iou_np[matches[:, 0], matches[:, 1]].argsort()[::-1]]
+                    matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
+                    matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
+                correct[matches[:, 1].astype(int), t_idx] = True
+        correct = torch.tensor(correct, dtype=torch.bool)
+
+        all_tp.append(correct)
+        all_conf.append(pred_conf)
+        all_pred_cls.append(pred_cls)
+
+    if not all_conf:
+        return YoloBuiltinMetrics(0.0, 0.0, 0.0, 0.0, 0.0, len(image_paths), 0, 0)
+
+    tp = torch.cat(all_tp)
+    conf = torch.cat(all_conf)
+    pred_cls = torch.cat(all_pred_cls)
+    target_cls = torch.cat(all_target_cls) if all_target_cls else torch.zeros(0)
+
+    results = ap_per_class(
+        tp.numpy(),
+        conf.numpy(),
+        pred_cls.numpy(),
+        target_cls.numpy(),
+        names={0: "player"},
+    )
+    p, r, f1_arr, ap = results[2], results[3], results[4], results[5]
+
+    mp = float(p.mean()) if len(p) else 0.0
+    mr = float(r.mean()) if len(r) else 0.0
+    mf1 = float(f1_arr.mean()) if len(f1_arr) else 0.0
+    map50 = float(ap[:, 0].mean()) if ap.shape[0] > 0 else 0.0
+    map50_95 = float(ap.mean()) if ap.size > 0 else 0.0
+    n_gt_total = int(target_cls.shape[0])
+
+    return YoloBuiltinMetrics(
+        precision=mp,
+        recall=mr,
+        f1=mf1,
+        map50=map50,
+        map50_95=map50_95,
+        n_images=len(image_paths),
+        n_gt=n_gt_total,
+        n_pred=total_pred,
+    )
+
+
+def compute_player_united_metrics_yolo_builtin(
+    dataset_path: str | Path,
+    model_path: str | Path | None = None,
+    split: str = "test",
+    conf_threshold: float = 0.001,
+    gt_class_ids: tuple[int, ...] = (2, 3),
+    pred_class_ids: tuple[int, ...] = (2, 3),
+) -> YoloBuiltinMetrics:
+    """
+    Compute merged-player metrics using YOLO matching algorithm.
+
+    Takes a multi-class dataset (e.g. ball, number, player, player-dribble, referee, rim),
+    merges specified GT classes and prediction classes into a single "player" evaluation.
+
+    Uses raw detector output with class filtering only (no NMS, no cap).
+
+    Args:
+        gt_class_ids: label indices in the dataset that count as "player" GT.
+        pred_class_ids: model class indices whose predictions count as "player".
+    """
+    import torch
+    from ultralytics.utils.metrics import ap_per_class, box_iou
+
+    data_yaml = _resolve_dataset_path(dataset_path)
+    root = data_yaml.parent.resolve()
+    split_images_dir = root / split / "images"
+    split_labels_dir = root / split / "labels"
+    if not split_images_dir.is_dir() or not split_labels_dir.is_dir():
+        raise FileNotFoundError(f"{split}/images or {split}/labels not found in dataset: {root}")
+
+    ext = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+    image_paths = sorted(p for p in split_images_dir.iterdir() if p.suffix.lower() in ext)
+    if not image_paths:
+        raise FileNotFoundError(f"No images in {split_images_dir}")
+
+    if model_path is not None:
+        detector = Detector(model_path=str(model_path), conf_threshold=conf_threshold)
+    else:
+        detector = Detector(conf_threshold=conf_threshold)
+
+    gt_class_set = set(gt_class_ids)
+    pred_class_set = set(pred_class_ids)
+    iou_thresholds = torch.linspace(0.5, 0.95, 10)
+
+    all_tp: list[torch.Tensor] = []
+    all_conf: list[torch.Tensor] = []
+    all_pred_cls: list[torch.Tensor] = []
+    all_target_cls: list[torch.Tensor] = []
+    total_pred = 0
+
+    for img_path in tqdm(image_paths, desc="Metrics (player-united): test images", unit="img"):
+        lbl_path = split_labels_dir / (img_path.stem + ".txt")
+        img = cv2.imread(str(img_path))
+        if img is None:
+            continue
+        h, w = img.shape[:2]
+
+        gt_boxes_list: list[list[float]] = []
+        if lbl_path.is_file():
+            with open(lbl_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) < 5:
+                        continue
+                    try:
+                        cls = int(parts[0])
+                        x_c, y_c, bw, bh = map(float, parts[1:5])
+                    except (ValueError, IndexError):
+                        continue
+                    if cls not in gt_class_set:
+                        continue
+                    x1 = (x_c - bw / 2) * w
+                    y1 = (y_c - bh / 2) * h
+                    x2 = (x_c + bw / 2) * w
+                    y2 = (y_c + bh / 2) * h
+                    gt_boxes_list.append([x1, y1, x2, y2])
+
+        detections = detector.detect_frame(img)
+        player_dets = [d for d in detections if d.class_id in pred_class_set and d.confidence >= conf_threshold]
+        player_dets.sort(key=lambda d: -d.confidence)
+
+        n_gt = len(gt_boxes_list)
+        n_pred = len(player_dets)
+        total_pred += n_pred
+
+        if n_gt > 0:
+            all_target_cls.append(torch.zeros(n_gt))
+
+        if n_pred == 0:
+            continue
+
+        pred_boxes = torch.tensor(
+            [[d.x1, d.y1, d.x2, d.y2] for d in player_dets],
+            dtype=torch.float32,
+        )
+        pred_conf = torch.tensor([d.confidence for d in player_dets], dtype=torch.float32)
+        pred_cls = torch.zeros(n_pred)
+
+        if n_gt == 0:
+            all_tp.append(torch.zeros(n_pred, len(iou_thresholds), dtype=torch.bool))
+            all_conf.append(pred_conf)
+            all_pred_cls.append(pred_cls)
+            continue
+
+        gt_boxes = torch.tensor(gt_boxes_list, dtype=torch.float32)
+        gt_cls = torch.zeros(n_gt)
+
+        iou_matrix = box_iou(gt_boxes, pred_boxes)
+
+        correct = np.zeros((n_pred, len(iou_thresholds)), dtype=bool)
+        correct_class = (gt_cls[:, None] == pred_cls).cpu().numpy()
+        iou_np = (iou_matrix * torch.tensor(correct_class, dtype=iou_matrix.dtype)).cpu().numpy()
+        for t_idx, threshold in enumerate(iou_thresholds.tolist()):
+            matches = np.nonzero(iou_np >= threshold)
+            matches = np.array(matches).T
+            if matches.shape[0]:
+                if matches.shape[0] > 1:
+                    matches = matches[iou_np[matches[:, 0], matches[:, 1]].argsort()[::-1]]
+                    matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
+                    matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
+                correct[matches[:, 1].astype(int), t_idx] = True
+        correct = torch.tensor(correct, dtype=torch.bool)
+
+        all_tp.append(correct)
+        all_conf.append(pred_conf)
+        all_pred_cls.append(pred_cls)
+
+    if not all_conf:
+        return YoloBuiltinMetrics(0.0, 0.0, 0.0, 0.0, 0.0, len(image_paths), 0, 0)
+
+    tp = torch.cat(all_tp)
+    conf = torch.cat(all_conf)
+    pred_cls = torch.cat(all_pred_cls)
+    target_cls = torch.cat(all_target_cls) if all_target_cls else torch.zeros(0)
+
+    results = ap_per_class(
+        tp.numpy(),
+        conf.numpy(),
+        pred_cls.numpy(),
+        target_cls.numpy(),
+        names={0: "player-united"},
+    )
+    p, r, f1_arr, ap = results[2], results[3], results[4], results[5]
+
+    mp = float(p.mean()) if len(p) else 0.0
+    mr = float(r.mean()) if len(r) else 0.0
+    mf1 = float(f1_arr.mean()) if len(f1_arr) else 0.0
+    map50 = float(ap[:, 0].mean()) if ap.shape[0] > 0 else 0.0
+    map50_95 = float(ap.mean()) if ap.size > 0 else 0.0
+    n_gt_total = int(target_cls.shape[0])
+
+    return YoloBuiltinMetrics(
+        precision=mp,
+        recall=mr,
+        f1=mf1,
+        map50=map50,
+        map50_95=map50_95,
+        n_images=len(image_paths),
+        n_gt=n_gt_total,
+        n_pred=total_pred,
+    )
+
+
+def print_yolo_builtin_metrics(metrics: YoloBuiltinMetrics) -> None:
+    """Print YOLO built-in metrics to console."""
+    print(f"\n{'=' * 50}")
+    print("Player detection metrics (YOLO built-in)")
+    print(f"{'=' * 50}")
+    print(f"  Images         : {metrics.n_images}")
+    print(f"  GT boxes       : {metrics.n_gt}")
+    print(f"  Pred boxes     : {metrics.n_pred}")
+    print(f"  Precision      : {metrics.precision:.4f}")
+    print(f"  Recall         : {metrics.recall:.4f}")
+    print(f"  F1             : {metrics.f1:.4f}")
+    print(f"  mAP@0.5        : {metrics.map50:.4f}")
+    print(f"  mAP@0.5:0.95   : {metrics.map50_95:.4f}")
+    print(f"{'=' * 50}\n")
+
+
 def _print_detection_metrics(
     metrics: PlayerDetectionMetrics | BallDetectionMetrics | RimDetectionMetrics,
     title: str,
@@ -956,12 +1307,62 @@ if __name__ == "__main__":
     parser.add_argument("--ball", "-b", action="store_true", help="Compute ball metrics (default: players)")
     parser.add_argument("--rim", "-r", action="store_true", help="Compute rim metrics (default: players)")
     parser.add_argument("--rfdetr", action="store_true", help="Use RF-DETR backend (players/ball/rim)")
+    parser.add_argument(
+        "--yolo-builtin",
+        action="store_true",
+        help="Use YOLO matching for player metrics (single-class player dataset)",
+    )
+    parser.add_argument(
+        "--player-united",
+        action="store_true",
+        help="Merge player + player-dribble as one class (multi-class dataset)",
+    )
     parser.add_argument("--model", "-m", type=str, default=None, help="Path to detector checkpoint")
     parser.add_argument("--conf", type=float, default=0.001, help="Confidence threshold")
     parser.add_argument("--iou", type=float, default=0.5, help="IoU threshold for P/R")
+    parser.add_argument(
+        "--split", type=str, default="test", help="Dataset split (for --yolo-builtin / --player-united)"
+    )
+    parser.add_argument(
+        "--gt-classes",
+        type=str,
+        default=None,
+        help="Comma-separated GT class ids to merge as player (for --player-united, default: 2,3)",
+    )
+    parser.add_argument(
+        "--pred-classes",
+        type=str,
+        default=None,
+        help="Comma-separated pred class ids to merge as player (for --player-united, default: 2,3)",
+    )
     args = parser.parse_args()
 
     dataset = args.dataset
+
+    if args.player_united:
+        gt_ids = tuple(int(x) for x in args.gt_classes.split(",")) if args.gt_classes else (2, 3)
+        pred_ids = tuple(int(x) for x in args.pred_classes.split(",")) if args.pred_classes else (2, 3)
+        metrics = compute_player_united_metrics_yolo_builtin(
+            dataset,
+            model_path=args.model,
+            split=args.split,
+            conf_threshold=args.conf,
+            gt_class_ids=gt_ids,
+            pred_class_ids=pred_ids,
+        )
+        print_yolo_builtin_metrics(metrics)
+        raise SystemExit(0)
+
+    if args.yolo_builtin:
+        metrics = compute_player_metrics_yolo_builtin(
+            dataset,
+            model_path=args.model,
+            split=args.split,
+            conf_threshold=args.conf,
+        )
+        print_yolo_builtin_metrics(metrics)
+        raise SystemExit(0)
+
     if args.rim:
         if args.rfdetr:
             metrics = compute_rim_detection_metrics_rfdetr(

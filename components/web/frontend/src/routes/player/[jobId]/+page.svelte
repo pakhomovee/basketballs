@@ -27,6 +27,8 @@
 		annotations?.frames[String(currentFrame)]?.reid_cross_frame_matrix ?? null
 	);
 
+	let videoFps = $derived(annotations?.metadata.fps ?? 30);
+
 	onMount(async () => {
 		if (!jobId) return;
 		try {
@@ -116,6 +118,7 @@
 					passEvents={annotations?.pass_events ?? []}
 					shotEvents={annotations?.shot_events ?? []}
 					{currentFrame}
+					fps={videoFps}
 					onSeek={handleSeek}
 				/>
 			</div>

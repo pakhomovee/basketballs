@@ -5,13 +5,18 @@
 		annotations: AnnotationData | null;
 		currentTime: number;
 		duration: number;
+		onSeek?: (time: number) => void;
 	}
 
-	let { annotations, currentTime, duration }: Props = $props();
+	let { annotations, currentTime, duration, onSeek }: Props = $props();
+
+	let track: HTMLDivElement;
+	let dragging = $state(false);
 
 	const tf = $derived(annotations?.metadata.total_frames ?? 1);
 	const shots = $derived(annotations?.shot_events ?? []);
 	const passes = $derived(annotations?.pass_events ?? []);
+	const hasEvents = $derived(shots.length > 0 || passes.length > 0);
 
 	function pctFrame(f: number): number {
 		return (f / Math.max(tf, 1)) * 100;
@@ -29,25 +34,57 @@
 	function teamHex(teamId: number): string {
 		return teamId === 0 ? 'var(--color-team-orange)' : 'var(--color-team-blue)';
 	}
+
+	function seekFromPointer(clientX: number) {
+		if (!track || !duration) return;
+		const rect = track.getBoundingClientRect();
+		const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+		onSeek?.(pct * duration);
+	}
+
+	function onPointerDown(e: PointerEvent) {
+		dragging = true;
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		seekFromPointer(e.clientX);
+	}
+
+	function onPointerMove(e: PointerEvent) {
+		if (!dragging) return;
+		seekFromPointer(e.clientX);
+	}
+
+	function onPointerUp() {
+		dragging = false;
+	}
 </script>
 
-{#if annotations && (shots.length > 0 || passes.length > 0)}
+<div
+	bind:this={track}
+	role="slider"
+	tabindex="0"
+	aria-label="Seek timeline"
+	aria-valuemin={0}
+	aria-valuemax={duration || 0}
+	aria-valuenow={currentTime}
+	class="relative w-full shrink-0 h-4 cursor-pointer select-none touch-none"
+	onpointerdown={onPointerDown}
+	onpointermove={onPointerMove}
+	onpointerup={onPointerUp}
+	onpointercancel={onPointerUp}
+>
+	<!-- Track background -->
 	<div
-		class="relative w-full h-8 shrink-0 rounded-lg overflow-visible pb-5 mb-0.5"
-		aria-label="Shot and pass timeline"
-	>
-		<!-- Playhead -->
-		<div
-			class="absolute top-0 bottom-0 w-px z-10 bg-white/90 shadow-[0_0_6px_rgba(255,255,255,0.5)] pointer-events-none"
-			style:left="{pctTime(currentTime)}%"
-		></div>
+		class="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-2.5 rounded-full bg-[var(--color-border)]/50 ring-1 ring-[var(--color-border)]/80"
+	></div>
 
-		<!-- Track background -->
-		<div
-			class="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-2.5 rounded-full bg-[var(--color-border)]/50 ring-1 ring-[var(--color-border)]/80"
-		></div>
+	<!-- Progress fill -->
+	<div
+		class="absolute left-0 top-1/2 -translate-y-1/2 h-2.5 rounded-full bg-[var(--color-accent)]/40"
+		style:width="{pctTime(currentTime)}%"
+	></div>
 
-		<!-- Shot segments (middle layer); make window drawn as brighter inner band -->
+	{#if hasEvents}
+		<!-- Shot segments -->
 		<div
 			class="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-2.5 rounded-full overflow-visible pointer-events-none"
 		>
@@ -56,7 +93,7 @@
 				{@const rawW = ((s.frame_end - s.frame_start + 1) / Math.max(tf, 1)) * 100}
 				{@const w = Math.max(rawW, 0.45)}
 				<div
-					class="absolute top-0 h-full rounded-sm transition-opacity hover:opacity-100 opacity-95 overflow-hidden"
+					class="absolute top-0 h-full rounded-sm opacity-95 overflow-hidden"
 					style:left="{left}%"
 					style:width="{w}%"
 					style:background={s.is_make
@@ -81,33 +118,36 @@
 			{/each}
 		</div>
 
-		<!-- Pass markers (top ticks) -->
-		<div class="absolute left-0 right-0 top-0 h-3 pointer-events-none">
+		<!-- Pass segments -->
+		<div
+			class="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-2.5 rounded-full overflow-visible pointer-events-none"
+		>
 			{#each passes as p}
+				{@const left = pctFrame(p.frame_start)}
+				{@const rawW = ((p.frame_end - p.frame_start + 1) / Math.max(tf, 1)) * 100}
+				{@const w = Math.max(rawW, 0.35)}
 				<div
-					class="absolute bottom-0 w-px h-2.5 rounded-t-sm opacity-95 -translate-x-1/2 shadow-[0_0_4px_currentColor]"
-					style:left="{passMid(p)}%"
+					class="absolute top-0 h-full rounded-sm opacity-90"
+					style:left="{left}%"
+					style:width="{w}%"
 					style:background={teamHex(p.team_id)}
-					title="Pass · #{p.from_player_id}→#{p.to_player_id}"
+					title="Pass · #{p.from_player_id}→#{p.to_player_id} · f{p.frame_start}–{p.frame_end}"
 				></div>
 			{/each}
 		</div>
+	{/if}
 
-		<!-- Legend -->
-		<div
-			class="absolute -bottom-5 left-0 right-0 flex justify-center gap-3 text-[9px] uppercase tracking-wider text-[var(--color-text-muted)]"
-		>
-			<span class="inline-flex items-center gap-1"
-				><i class="inline-block w-2 h-2 rounded-sm bg-gradient-to-b from-amber-400 to-orange-600"
-				></i> Shot</span
-			>
-			<span class="inline-flex items-center gap-1"
-				><i class="inline-block w-2 h-2 rounded-sm bg-gradient-to-b from-emerald-400 to-emerald-800"
-				></i> Make</span
-			>
-			<span class="inline-flex items-center gap-1"
-				><i class="inline-block w-0.5 h-2 bg-[var(--color-team-orange)]"></i> Pass</span
-			>
-		</div>
-	</div>
-{/if}
+	<!-- Thumb -->
+	<div
+		class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-20 pointer-events-none
+			w-3.5 h-3.5 rounded-full bg-[var(--color-accent)] border-2 border-white shadow-md
+			transition-transform {dragging ? 'scale-125' : ''}"
+		style:left="{pctTime(currentTime)}%"
+	></div>
+
+	<!-- Playhead line -->
+	<div
+		class="absolute top-0 bottom-0 w-px z-10 bg-white/70 pointer-events-none"
+		style:left="{pctTime(currentTime)}%"
+	></div>
+</div>

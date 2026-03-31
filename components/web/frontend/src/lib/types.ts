@@ -20,6 +20,7 @@ export interface PlayerAnnotation {
 	skeleton: [number, number, number][] | null;
 	mask_polygon: [number, number][] | null;
 	is_possession: boolean;
+	track_number: number | null;
 }
 
 export interface BallAnnotation {
@@ -44,6 +45,8 @@ export interface PassEventAnnotation {
 	frame_end: number;
 	from_player_id: number;
 	to_player_id: number;
+	from_track_number: number | null;
+	to_track_number: number | null;
 	team_id: number;
 	timestamp_sec: number;
 }
@@ -58,6 +61,9 @@ export interface ShotEventAnnotation {
 	timestamp_end_sec: number;
 	make_timestamp_start_sec: number | null;
 	make_timestamp_end_sec: number | null;
+	shooter_player_id: number | null;
+	shooter_track_number: number | null;
+	shooter_team_id: number | null;
 }
 
 export interface AnnotationData {
@@ -92,7 +98,8 @@ export interface ToggleState {
 	masks: boolean;
 	skeletons: boolean;
 	ball: boolean;
-	jerseyNumbers: boolean;
+	trackNumbers: boolean;
+	rawJerseyNumbers: boolean;
 	playerIds: boolean;
 	speedTrails: boolean;
 	minimap: boolean;
@@ -106,7 +113,8 @@ export const DEFAULT_TOGGLES: ToggleState = {
 	masks: false,
 	skeletons: false,
 	ball: true,
-	jerseyNumbers: false,
+	trackNumbers: true,
+	rawJerseyNumbers: false,
 	playerIds: true,
 	speedTrails: false,
 	minimap: true,

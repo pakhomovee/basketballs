@@ -168,5 +168,42 @@ def enrich_players_with_pose(
     return players_detections
 
 
+def propagate_track_numbers(
+    players_detections: PlayersDetections,
+    *,
+    min_share: float = 0.8,
+) -> None:
+    """
+    For each tracked player_id, pick the most frequent jersey number seen
+    across all frames and write it to ``player.track_number`` on every instance.
+
+    The number is only assigned if its share among all OCR votes for that
+    track is at least ``min_share``.
+
+    Requires that ``player.number.num`` has already been set by the OCR stage
+    and that ``player_id`` reflects stable track IDs (post-tracker).
+    """
+    from collections import Counter
+
+    votes: dict[int, Counter] = {}
+    for players in players_detections.values():
+        for p in players:
+            if p.player_id < 0:
+                continue
+            if p.number is not None and p.number.num is not None:
+                votes.setdefault(p.player_id, Counter())[p.number.num] += 1
+
+    best: dict[int, int] = {}
+    for pid, counter in votes.items():
+        most_common_num, count = counter.most_common(1)[0]
+        total = counter.total()
+        if count / total >= min_share:
+            best[pid] = most_common_num
+
+    for players in players_detections.values():
+        for p in players:
+            p.track_number = best.get(p.player_id)
+
+
 # Backwards/wording-friendly alias (optional)
 enrich_players_with_numbers = enrich_detections_with_numbers
