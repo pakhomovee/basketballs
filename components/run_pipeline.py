@@ -87,6 +87,8 @@ def run_pipeline(
             referee_conf_threshold=cfg.detector.referee_conf_threshold,
             number_conf_threshold=cfg.detector.number_conf_threshold,
             ocr_conf_threshold=cfg.detector.ocr_conf_threshold,
+            number_recognizer_n_votes=cfg.detector.number_recognizer_n_votes,
+            number_recognizer_vote_mode=cfg.detector.number_recognizer_vote_mode,
         )
 
         stage_logger.set_stage("Estimating poses…", 2)

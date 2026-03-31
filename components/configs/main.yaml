@@ -29,6 +29,8 @@ detector:
   referee_conf_threshold: 0.25
   number_conf_threshold: 0.25
   ocr_conf_threshold: 0.9
+  number_recognizer_n_votes: 5
+  number_recognizer_vote_mode: majority
 
 tracker:
   num_tracks: 10
@@ -62,7 +64,7 @@ actions:
   max_pass_gap_seconds: 0.75
   shot_attribution_back_seconds: 0.5
   shot_attribution_forward_seconds: 0.75
-  track_number_min_share: 0.8
+  track_number_min_share: 0.6
 
 smoother:
   obs_noise: 0.1

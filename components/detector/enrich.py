@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import cv2
 from tqdm import tqdm
@@ -109,6 +110,8 @@ def enrich_detections_with_numbers(
     referee_conf_threshold: float = 0.25,
     number_conf_threshold: float = 0.25,
     ocr_conf_threshold: float = 0.999,
+    number_recognizer_n_votes: int = 5,
+    number_recognizer_vote_mode: Literal["unanimous", "majority"] = "unanimous",
 ) -> tuple[PlayersDetections, RefereesDetections, NumberDetections]:
     """
     Run number recognition on each frame and assign numbers to players.
@@ -136,6 +139,8 @@ def enrich_detections_with_numbers(
             frame=frame,
             conf_threshold=number_conf_threshold,
             ocr_conf_threshold=ocr_conf_threshold,
+            number_recognizer_n_votes=number_recognizer_n_votes,
+            number_recognizer_vote_mode=number_recognizer_vote_mode,
         )
         idx += 1
     match_numbers_to_players(players_detections, number_detections, referees_detections)

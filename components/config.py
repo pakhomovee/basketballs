@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MainConfig(BaseModel):
@@ -47,6 +47,11 @@ class DetectorConfig(BaseModel):
     referee_conf_threshold: float = 0.25
     number_conf_threshold: float = 0.25
     ocr_conf_threshold: float = 0.999
+    #: PARSeq jersey OCR: augmented forward passes (max 5 distinct crops in ``_augment_crop``).
+    number_recognizer_n_votes: int = Field(default=5, ge=1, le=5)
+    #: ``unanimous``: keep digit only if every pass agrees;
+    #: ``majority``: strict majority among passes that meet ``ocr_conf_threshold``.
+    number_recognizer_vote_mode: Literal["unanimous", "majority"] = "unanimous"
 
 
 class TrackerConfig(BaseModel):
