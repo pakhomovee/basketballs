@@ -11,6 +11,7 @@
 	let error = $state('');
 	let pendingFile = $state<File | null>(null);
 	let videoName = $state('');
+	let trackerType = $state<'flow' | 'hungarian' | 'appearance'>('flow');
 	let progressMap = $state<Record<string, { stage: string; pct: number }>>({});
 	let pollTimer: ReturnType<typeof setInterval>;
 
@@ -57,8 +58,9 @@
 		const file = pendingFile;
 		pendingFile = null;
 		try {
-			await uploadVideo(file, videoName);
+			await uploadVideo(file, videoName, trackerType);
 			videoName = '';
+			trackerType = 'flow';
 			await loadJobs();
 		} catch (e: any) {
 			error = e.message || 'Upload failed';
@@ -148,6 +150,17 @@
 						if (e.key === 'Enter') confirmUpload();
 					}}
 				/>
+				<label class="block text-sm font-medium mb-1.5" for="tracker-type-select">Tracker</label>
+				<select
+					id="tracker-type-select"
+					bind:value={trackerType}
+					class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] mb-5"
+				>
+					<option value="flow">FlowTracker (offline, min-cost max-flow)</option>
+					<option value="hungarian">HungarianTracker (online, cascaded Hungarian)</option>
+					<option value="appearance">AppearanceTracker (online, Hungarian + ReID embeddings)</option
+					>
+				</select>
 				<div class="flex gap-3">
 					<button
 						onclick={confirmUpload}

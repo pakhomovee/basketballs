@@ -80,6 +80,21 @@ class TrackerConfig(BaseModel):
     occlusion_penalty: float = 0.1
     occlusion_start_pass: int = 2
 
+    # Hungarian tracker
+    n_init: int = 3
+    kf_velocity_reset_age: int = 2
+    kf_update_gate: float = 13.82
+    chi2_95_2dof: float = 5.9915
+    bbox_bottom_jump_frac: float = 0.15
+    bbox_height_shrink_frac: float = 0.30
+    color_team_gate: float = 0.40
+    color_min_samples: int = 5
+    court_half_x: float = 15.0
+    court_half_y: float = 8.0
+    court_gate_base_m: float = 1.0
+    court_gate_per_frame_m: float = 0.5
+    court_gate_max_m: float = 5.0
+
 
 class EmbeddingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -200,6 +215,26 @@ class SmootherConfig(BaseModel):
     max_gap_frames: int = 45
 
 
+class StitcherConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    w_position: float = 0.45
+    w_app: float = 0.35
+    w_color: float = 0.20
+    absorb_gate: float = 0.72
+    color_conflict_gate: float = 0.45
+    color_conflict_min_samples: int = 5
+    max_speed: float = 9.0
+    speed_safety: float = 1.5
+    vel_window: int = 5
+    max_gallery: int = 200
+    min_jersey_count: int = 2
+    occlusion_iou_thresh: float = 0.15
+    spatial_fade_sec: float = 1.0
+    split_min_side: int = 5
+    split_threshold: float = 0.35
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     main: MainConfig = MainConfig()
@@ -207,6 +242,7 @@ class AppConfig(BaseModel):
     ball_detector: BallDetectorConfig = BallDetectorConfig()
     detector: DetectorConfig = DetectorConfig()
     tracker: TrackerConfig = TrackerConfig()
+    stitcher: StitcherConfig = StitcherConfig()
     team_clustering: TeamClusteringConfig = TeamClusteringConfig()
     actions: ActionsConfig = ActionsConfig()
     smoother: SmootherConfig = SmootherConfig()

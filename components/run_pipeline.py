@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Any
@@ -16,11 +17,14 @@ from reidentification import extract_reid_embeddings
 from smoother import smooth_detection_coordinates
 from team_clustering.embedding import PlayerEmbedder
 from team_clustering.team_clustering import TeamClustering
-from tracking import FlowTracker
+from tracking import FlowTracker, HungarianTracker, stitch_tracklets
+from tracking.appearance_tracker import SimpleAppearanceTracker
 from video_reader import VideoReader
 from shot_detector.shot_detector import ShotDetector
 
 from config import AppConfig
+
+logger = logging.getLogger(__name__)
 
 
 TOTAL_STAGES = 11
@@ -57,6 +61,7 @@ def run_pipeline(
     video_path: str,
     cfg: AppConfig,
     stage_logger: Any = None,
+    tracker_type: str = "flow",
 ) -> PipelineResult:
     """
     Run the full analytics pipeline (shared by CLI and web backend).
@@ -125,8 +130,35 @@ def run_pipeline(
             extract_reid_embeddings(vr, players_detections, str(paths.reid), device=get_device())
 
         stage_logger.set_stage("Running tracker…", 8)
-        tracker = FlowTracker(cfg=cfg, frame_width=float(vr.width), fps=video_fps)
-        tracker.track(players_detections)
+        if tracker_type == "hungarian":
+            tracker = HungarianTracker(cfg=cfg, frame_width=float(vr.width), fps=video_fps)
+            tracker.track(players_detections)
+        elif tracker_type == "appearance":
+            tracker = SimpleAppearanceTracker(num_tracks=cfg.tracker.num_tracks, max_age=cfg.tracker.max_skip)
+            tracker.track(players_detections)
+        else:
+            tracker = FlowTracker(cfg=cfg, frame_width=float(vr.width), fps=video_fps)
+            tracker.track(players_detections)
+
+        if tracker_type in ("hungarian", "appearance"):
+            # Remove noise tracklets before stitching
+            from collections import Counter
+
+            min_track_hits = 4
+            hit_counts: Counter[int] = Counter()
+            for players in players_detections.values():
+                for player in players:
+                    if player.player_id != -1:
+                        hit_counts[player.player_id] += 1
+            noise_ids = {pid for pid, cnt in hit_counts.items() if cnt < min_track_hits}
+            if noise_ids:
+                logger.info("Dropping %d short tracklets (< %d hits)", len(noise_ids), min_track_hits)
+                for players in players_detections.values():
+                    for player in players:
+                        if player.player_id in noise_ids:
+                            player.player_id = -1
+
+            stitch_tracklets(players_detections, fps=video_fps, cfg=cfg)
 
         stage_logger.set_stage("Clustering teams…", 9)
         team_clustering = TeamClustering(cfg=cfg)

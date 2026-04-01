@@ -15,9 +15,13 @@ from common.distances import bbox_iou
 from .evaluation import evaluate, load_yolo_mot, match_frame, remap_pred_ids
 from .benchmark import run_benchmark
 from .flow_tracker import FlowTracker
+from .hungarian_tracker import HungarianTracker
+from .stitching import stitch_tracklets
 
 __all__ = [
     "FlowTracker",
+    "HungarianTracker",
+    "stitch_tracklets",
     "evaluate",
     "load_yolo_mot",
     "match_frame",

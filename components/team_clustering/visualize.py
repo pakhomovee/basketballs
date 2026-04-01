@@ -68,8 +68,9 @@ def plot_masks(
     num_to_plot: int = DEFAULT_NUM_MASKS,
     show: bool = True,
     save_path: str | None = None,
+    n_cols: int = 8,
 ) -> None:
-    """Show full-frame bbox context, crop, and blended crop for sampled detections."""
+    """Show crop and blended crop+mask in an n_cols-wide grid."""
     if not sample_detections:
         print("No sample detections to plot.")
         return
@@ -78,40 +79,36 @@ def plot_masks(
     if len(samples) > num_to_plot:
         samples = random.sample(samples, num_to_plot)
 
-    rows = len(samples)
-    cols = 3
-    fig, axes = plt.subplots(rows, cols, figsize=(cols * 4, rows * 3))
-    if rows == 1:
+    # Each sample occupies 2 columns (crop | crop+mask); pack into n_cols columns.
+    panels_per_sample = 2
+    total_panels = len(samples) * panels_per_sample
+    cols = n_cols
+    rows = (total_panels + cols - 1) // cols
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 2, rows * 2))
+    if rows == 1 and cols == 1:
+        axes = np.array([[axes]])
+    elif rows == 1:
         axes = axes[np.newaxis, :]
+    elif cols == 1:
+        axes = axes[:, np.newaxis]
     axes = axes.flatten()
 
     for i, (frame, bbox, crop, mask) in enumerate(samples):
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
         binary = (mask > 0.5).astype(np.uint8)
-
-        x1, y1, x2, y2 = bbox
-        frame_with_bbox = frame_rgb.copy()
-        cv2.rectangle(frame_with_bbox, (x1, y1), (x2, y2), BBOX_COLOR, 2)
 
         green = np.zeros_like(crop_rgb)
         green[binary == 1] = MASK_COLOR
         blended = cv2.addWeighted(crop_rgb, 0.6, green, 0.4, 0)
 
-        idx = i * 3
-        axes[idx].imshow(frame_with_bbox)
-        axes[idx].set_title(f"#{i + 1} Frame + BBox")
+        idx = i * panels_per_sample
+        axes[idx].imshow(crop_rgb)
         axes[idx].axis("off")
 
-        axes[idx + 1].imshow(crop_rgb)
-        axes[idx + 1].set_title(f"#{i + 1} Crop")
+        axes[idx + 1].imshow(blended)
         axes[idx + 1].axis("off")
 
-        axes[idx + 2].imshow(blended)
-        axes[idx + 2].set_title(f"#{i + 1} Crop + Mask")
-        axes[idx + 2].axis("off")
-
-    for j in range(len(samples) * 3, len(axes)):
+    for j in range(len(samples) * panels_per_sample, len(axes)):
         axes[j].axis("off")
 
     plt.tight_layout()

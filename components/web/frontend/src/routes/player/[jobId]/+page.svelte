@@ -5,6 +5,7 @@
 	import type { AnnotationData, Job, ToggleState, ReidMatrix } from '$lib/types';
 	import { DEFAULT_TOGGLES } from '$lib/types';
 	import VideoPlayer from '$lib/components/VideoPlayer.svelte';
+	import { resolveFrame } from '$lib/draw';
 	import ControlPanel from '$lib/components/ControlPanel.svelte';
 	import PossessionPanel from '$lib/components/PossessionPanel.svelte';
 	import TimelinePanel from '$lib/components/TimelinePanel.svelte';
@@ -23,7 +24,10 @@
 	let player = $state<VideoPlayer | undefined>(undefined);
 
 	let reidMatrix = $derived<ReidMatrix | null>(
-		annotations?.frames[String(currentFrame)]?.reid_cross_frame_matrix ?? null
+		annotations
+			? (annotations.frames[String(resolveFrame(annotations, currentFrame))]
+					?.reid_cross_frame_matrix ?? null)
+			: null
 	);
 
 	let videoFps = $derived(annotations?.metadata.fps ?? 30);

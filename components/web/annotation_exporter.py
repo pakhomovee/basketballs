@@ -49,6 +49,7 @@ def _serialize_player(player: Player) -> dict:
 
     return {
         "player_id": player.player_id,
+        "raw_player_id": player.raw_player_id,
         "team_id": player.team_id,
         "bbox": [int(c) for c in player.bbox] if player.bbox else None,
         "confidence": _to_json_safe(player.confidence),
@@ -215,7 +216,14 @@ def export_annotations(
     shot_attribution_forward_sec: float = 0.25,
 ) -> dict:
     """Build a complete annotation dict ready for JSON serialization."""
-    all_frame_ids = sorted(set(players_detections.keys()) | set((ball_detections or {}).keys()))
+    frame_step = max(1, int(video_meta.get("frame_step", 1) or 1))
+    total_frames = int(video_meta.get("total_frames", 0) or 0)
+
+    if total_frames > 0:
+        all_frame_ids = list(range(0, total_frames, frame_step))
+    else:
+        all_frame_ids = sorted(set(players_detections.keys()) | set((ball_detections or {}).keys()))
+
     frames: dict[str, dict] = {}
 
     prev_players: list[Player] = []
