@@ -4,6 +4,10 @@
 
 Use `components/web/dev.sh`
 
+## License
+
+Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)
+
 ## Legal Notice
 
 The models, datasets, and associated materials (collectively, the “Materials”) are provided for limited, non-commercial research, educational, and academic use only, in accordance with applicable fair use principles and relevant copyright laws.
