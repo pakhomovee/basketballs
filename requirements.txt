@@ -34,3 +34,4 @@ pydantic>=2.0
 uvicorn
 fastapi
 aiosqlite
+python-multipart
