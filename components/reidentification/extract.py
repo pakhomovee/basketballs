@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 import torch
 
+from common.utils.utils import get_device
 from .dataset import preprocess_reid_image
 from .model import ReIDModel
 
@@ -13,12 +14,12 @@ from .model import ReIDModel
 class ReIDFeatureExtractor:
     """Extracts L2-normalised ReID features from player crops using a trained model."""
 
-    def __init__(self, weights_path: str, device: str = "cuda"):
-        self.device = device
-        state = torch.load(weights_path, map_location=device, weights_only=True)
+    def __init__(self, weights_path: str, device: str | None = None):
+        self.device = device or get_device()
+        state = torch.load(weights_path, map_location=self.device, weights_only=True)
         self.model = ReIDModel(pretrained=False)
         self.model.load_state_dict(state, strict=False)
-        self.model.to(device)
+        self.model.to(self.device)
         self.model.eval()
 
     @torch.no_grad()
@@ -34,7 +35,7 @@ def extract_reid_embeddings(
     video: cv2.VideoCapture,
     detections: dict,
     weights_path: str,
-    device: str = "cuda",
+    device: str | None = None,
     batch_size: int = 64,
 ) -> None:
     """Replace player.embedding with ReID features for all detections, in-place."""
