@@ -30,6 +30,7 @@ dataset/basketball*
 dataset/team_clustering_benchmark/
 dataset/tracking_benchmark/
 dataset/tracking_long_benchmark/
+dataset/SportsMOT_basketball/
 components/court_detector/dataset
 components/court_detector/runs
 components/court_detector/yolo_combined_data

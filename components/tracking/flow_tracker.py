@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from tqdm import tqdm
 
-from common.distances import bbox_bottom_mid_distance, bbox_iou, cosine_dist
+from common.distances import bbox_bottom_mid_distance, bbox_iou, cosine_dist, court_distance
 from config import load_default_config
 from tracking.min_cost_flow import MinCostFlow
 
@@ -180,6 +180,11 @@ class FlowTracker:
         _fps_factor = 30.0 / fps
         self.bbox_scale = tracker_cfg.bbox_scale * _fps_factor
         self.occlusion_gate = tracker_cfg.occlusion_gate * _fps_factor
+
+        # Camera-invariant (court-space) spatial cost, gated + fps-scaled like
+        # bbox_scale (court_scale is meters-per-frame at 30 fps).
+        self.use_court_spatial = tracker_cfg.use_court_spatial
+        self.court_scale = tracker_cfg.court_scale * _fps_factor
 
         self.edge_margin = tracker_cfg.edge_margin
         self.k_warmup_frames = tracker_cfg.k_warmup_frames
@@ -721,7 +726,19 @@ class FlowTracker:
         bbox_i = player_i.bbox
         bbox_j = player_j.bbox
 
-        if bbox_i and bbox_j and len(bbox_i) >= 4 and len(bbox_j) >= 4:
+        court_i = player_i.court_position if self.use_court_spatial else None
+        court_j = player_j.court_position if self.use_court_spatial else None
+
+        if court_i is not None and court_j is not None:
+            # Camera-invariant: metric distance on the court plane. Robust to
+            # pan/zoom, which inflate pixel distance on dynamic footage.
+            dist = court_distance(court_i, court_j)
+            scale = self.court_scale * (max(1, frame_gap) ** 0.5)
+            x = min(dist / max(scale, 1e-6), 15.0)  # clip to avoid overflow
+            spatial_cost = np.exp(x) - 1.0
+        elif bbox_i and bbox_j and len(bbox_i) >= 4 and len(bbox_j) >= 4:
+            # Fallback: pixel bottom-center distance (court_position missing or
+            # court-space disabled).
             px_dist = bbox_bottom_mid_distance(bbox_i, bbox_j)
             scale = self.bbox_scale * (max(1, frame_gap) ** 0.5)
             x = min(px_dist / max(scale, 1e-6), 15.0)  # clip to avoid overflow

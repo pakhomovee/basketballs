@@ -9,7 +9,7 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 from common.classes.player import PlayersDetections
-from common.distances import cosine_dist
+from common.distances import cosine_dist, court_distance
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +23,7 @@ class _Track:
     bbox: list[int]
     reid_embedding: np.ndarray | None
     embedding: np.ndarray | None
+    court_position: tuple[float, float] | None = None
     age: int = 0
 
     _ema_alpha: float = field(default=0.3, repr=False)
@@ -30,6 +31,7 @@ class _Track:
     def update(self, player, frame_id: int) -> None:
         self.last_frame = frame_id
         self.bbox = list(player.bbox)
+        self.court_position = player.court_position
         self.age = 0
         self._update_embedding("reid_embedding", player.reid_embedding)
         self._update_embedding("embedding", player.embedding)
@@ -59,6 +61,8 @@ class SimpleAppearanceTracker:
         w_reid: float = 0.7,
         w_spatial: float = 0.3,
         ema_alpha: float = 0.3,
+        use_court_spatial: bool = False,
+        max_court_dist: float = 10.0,
     ) -> None:
         self.num_tracks = num_tracks
         self.max_age = max_age
@@ -66,12 +70,32 @@ class SimpleAppearanceTracker:
         self.w_reid = w_reid
         self.w_spatial = w_spatial
         self.ema_alpha = ema_alpha
+        # Camera-invariant spatial cost: when enabled and both the track and
+        # the detection carry a court_position, use metric court distance
+        # (robust to camera pan/zoom) instead of pixel centre distance. Falls
+        # back to pixels when a court_position is missing. Default off so it
+        # can be A/B'd on the benchmark, mirroring FlowTracker.
+        self.use_court_spatial = use_court_spatial
+        self.max_court_dist = max_court_dist
 
         self._tracks: list[_Track] = []
         self._next_id: int = 1
 
     def _spatial_cost(self, track: _Track, player) -> float:
-        """Pixel-distance cost normalised to [0, 1] using max_pixel_dist."""
+        """Spatial cost in [0, 1] with a hard gate; court-metric or pixel space."""
+        if (
+            self.use_court_spatial
+            and track.court_position is not None
+            and player.court_position is not None
+        ):
+            # Camera-invariant: metric distance on the court plane.
+            dist = court_distance(track.court_position, player.court_position)
+            if self.max_court_dist > 0 and dist > self.max_court_dist:
+                return _INF_COST
+            scale = self.max_court_dist if self.max_court_dist > 0 else 10.0
+            return min(dist / scale, 1.0)
+
+        # Fallback: pixel-centre distance normalised by max_pixel_dist.
         cx1, cy1 = _bbox_centre(track.bbox)
         cx2, cy2 = _bbox_centre(list(player.bbox))
         dist = float(np.hypot(cx2 - cx1, cy2 - cy1))
@@ -148,6 +172,7 @@ class SimpleAppearanceTracker:
                 bbox=list(players[pi].bbox),
                 reid_embedding=players[pi].reid_embedding.copy() if players[pi].reid_embedding is not None else None,
                 embedding=players[pi].embedding.copy() if players[pi].embedding is not None else None,
+                court_position=players[pi].court_position,
                 _ema_alpha=self.ema_alpha,
             )
             players[pi].player_id = new_id

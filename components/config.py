@@ -60,6 +60,16 @@ class TrackerConfig(BaseModel):
     num_tracks: int = 10
     max_skip: int = 15
     bbox_scale: float = 20.0
+    # Camera-invariant spatial cost (Flow tracker). When enabled and both
+    # detections carry a court_position, the spatial link cost is computed from
+    # metric court distance instead of pixel bottom-center distance, which is
+    # robust to camera pan/zoom on dynamic footage. Falls back to pixels when a
+    # court_position is missing. Default off so it can be A/B'd on the benchmark.
+    use_court_spatial: bool = False
+    # Metric scale (meters per frame at 30 fps) for the exponential court-space
+    # spatial cost: ``exp(court_dist / (court_scale * sqrt(frame_gap))) - 1``.
+    # Scaled by ``30 / fps`` at runtime, mirroring ``bbox_scale``.
+    court_scale: float = 1.5
     w_spatial: float = 0.2
     w_app: float = 0.6
     w_iou: float = 0.2
@@ -163,6 +173,14 @@ class TrackingBenchmarkConfig(BaseModel):
     dataset: BenchmarkDataset = BenchmarkDataset(
         url="https://disk.yandex.ru/d/k3Y4Jd6q3tzb7g",
         path="dataset/tracking_benchmark",
+    )
+    # Basketball-only SportsMOT subset (MOT image sequences + gt.txt), used by
+    # tracking.sportsmot_benchmark. The archive must extract to a directory
+    # named SportsMOT_basketball/ (with splits_txt/ and dataset/{train,val,test}/)
+    # inside dataset/. Set `url` to the Yandex.Disk share once uploaded.
+    sportsmot: BenchmarkDataset = BenchmarkDataset(
+        url="https://disk.yandex.ru/d/EdFzHgWFl3fFuw",
+        path="dataset/SportsMOT_basketball",
     )
 
 

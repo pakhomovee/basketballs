@@ -24,6 +24,17 @@ def bbox_bottom_mid_distance(a, b) -> float:
     return float(np.hypot(pa[0] - pb[0], pa[1] - pb[1]))
 
 
+def court_distance(a, b) -> float:
+    """Euclidean distance between two court positions ``(x_m, y_m)`` in meters.
+
+    Court positions are camera-invariant (homography-projected onto the court
+    plane), so unlike :func:`bbox_bottom_mid_distance` this distance is not
+    inflated by camera pan/zoom — the property that makes it useful for linking
+    detections across highly dynamic broadcast footage.
+    """
+    return float(np.hypot(a[0] - b[0], a[1] - b[1]))
+
+
 def bbox_iou(a, b) -> float:
     """IoU of two ``[x1, y1, x2, y2]`` boxes."""
     a, b = np.asarray(a, dtype=float).ravel()[:4], np.asarray(b, dtype=float).ravel()[:4]

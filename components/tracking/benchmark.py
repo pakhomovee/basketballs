@@ -268,6 +268,64 @@ def discover_sequences(data_dir: str | Path) -> list[tuple[str, str]]:
     return pairs
 
 
+# ── Tracker dispatch ─────────────────────────────────────────────────────────
+
+
+def apply_tracker(
+    detections: PlayersDetections,
+    tracker_type: str,
+    cfg,
+    frame_width: float,
+    fps: float,
+) -> None:
+    """Run the selected tracker over *detections* in-place.
+
+    Shared by the video (mp4) and image-sequence (SportsMOT) benchmarks so both
+    exercise identical tracker configuration. ``fps`` is passed through to the
+    tracker, whose spatial thresholds self-calibrate by ``30 / fps`` — this is
+    how non-30-fps footage (e.g. 25-fps SportsMOT) stays consistent with the
+    30-fps-tuned defaults.
+    """
+    from tracking.appearance_tracker import SimpleAppearanceTracker
+    from tracking.flow_tracker import FlowTracker
+    from tracking.hungarian_tracker import HungarianTracker
+    from tracking.stitching import stitch_tracklets
+
+    if tracker_type == "hungarian":
+        log.info("Running HungarianTracker + stitching...")
+        tracker = HungarianTracker(cfg=cfg, frame_width=float(frame_width), fps=fps)
+        tracker.track(detections)
+
+        # Remove noise tracklets (same logic as run_pipeline.py)
+        min_track_hits = 4
+        hit_counts: Counter[int] = Counter()
+        for players in detections.values():
+            for player in players:
+                if player.player_id != -1:
+                    hit_counts[player.player_id] += 1
+        noise_ids = {pid for pid, cnt in hit_counts.items() if cnt < min_track_hits}
+        if noise_ids:
+            log.info("Dropping %d short tracklets (< %d hits)", len(noise_ids), min_track_hits)
+            for players in detections.values():
+                for player in players:
+                    if player.player_id in noise_ids:
+                        player.player_id = -1
+
+        stitch_tracklets(detections, fps=fps, cfg=cfg)
+    elif tracker_type == "appearance":
+        log.info("Running SimpleAppearanceTracker...")
+        tracker = SimpleAppearanceTracker(
+            num_tracks=cfg.tracker.num_tracks,
+            max_age=cfg.tracker.max_skip,
+            use_court_spatial=cfg.tracker.use_court_spatial,
+        )
+        tracker.track(detections)
+    else:
+        log.info("Running FlowTracker...")
+        tracker = FlowTracker(cfg=cfg, frame_width=float(frame_width), fps=fps)
+        tracker.track(detections)
+
+
 # ── Per-sequence evaluation ──────────────────────────────────────────────────
 
 
@@ -294,10 +352,6 @@ def evaluate_sequence(
     from common.utils.models import ensure_models, get_model_paths
     from reidentification.extract import extract_reid_embeddings
     from team_clustering.embedding import PlayerEmbedder
-    from tracking.appearance_tracker import SimpleAppearanceTracker
-    from tracking.flow_tracker import FlowTracker
-    from tracking.hungarian_tracker import HungarianTracker
-    from tracking.stitching import stitch_tracklets
 
     img_w, img_h = _get_video_dims(video_path)
     cap = cv2.VideoCapture(video_path)
@@ -334,35 +388,7 @@ def evaluate_sequence(
     else:
         log.warning("ReID model not found at %s — tracker will use colour embeddings only", paths.reid)
 
-    if tracker_type == "hungarian":
-        log.info("Running HungarianTracker + stitching...")
-        tracker = HungarianTracker(cfg=_cfg, frame_width=float(img_w), fps=video_fps)
-        tracker.track(detections)
-
-        # Remove noise tracklets (same logic as run_pipeline.py)
-        min_track_hits = 4
-        hit_counts: Counter[int] = Counter()
-        for players in detections.values():
-            for player in players:
-                if player.player_id != -1:
-                    hit_counts[player.player_id] += 1
-        noise_ids = {pid for pid, cnt in hit_counts.items() if cnt < min_track_hits}
-        if noise_ids:
-            log.info("Dropping %d short tracklets (< %d hits)", len(noise_ids), min_track_hits)
-            for players in detections.values():
-                for player in players:
-                    if player.player_id in noise_ids:
-                        player.player_id = -1
-
-        stitch_tracklets(detections, fps=video_fps, cfg=_cfg)
-    elif tracker_type == "appearance":
-        log.info("Running SimpleAppearanceTracker...")
-        tracker = SimpleAppearanceTracker(num_tracks=_cfg.tracker.num_tracks, max_age=_cfg.tracker.max_skip)
-        tracker.track(detections)
-    else:
-        log.info("Running FlowTracker...")
-        tracker = FlowTracker(cfg=_cfg, frame_width=float(img_w), fps=video_fps)
-        tracker.track(detections)
+    apply_tracker(detections, tracker_type, _cfg, frame_width=img_w, fps=video_fps)
 
     pred = _detections_to_pred(detections)
     pred_remapped = remap_pred_ids(gt, pred, iou_threshold)
