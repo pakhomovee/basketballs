@@ -5,6 +5,7 @@ triplets of consecutive frames, and returns ball position candidates per frame.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -289,39 +290,68 @@ class WASBBallDetector:
         max_disp_ratio = self.cfg.ball_detector.max_disp_ratio
 
         video.set(cv2.CAP_PROP_POS_FRAMES, 0)
-
-        frames_bgr: list[np.ndarray] = []
-        while True:
-            ret, frame = video.read()
-            if not ret:
-                break
-            frames_bgr.append(frame)
-
-        n = len(frames_bgr)
-        if n == 0:
+        ret, first_frame = video.read()
+        if not ret or first_frame is None:
             return {}
 
-        h, w = frames_bgr[0].shape[:2]
+        h, w = first_frame.shape[:2]
         center = np.array([w / 2.0, h / 2.0], dtype=np.float32)
         scale = float(max(h, w))
         trans = get_affine_transform(center, scale, MODEL_INPUT_WH)
         trans_inv = get_affine_transform(center, scale, MODEL_INPUT_WH, inv=True)
 
-        per_frame_candidates: list[list[dict]] = [[] for _ in range(n)]
+        # Streaming mode: keep only a small sliding buffer instead of all frames.
+        frame_buffer: dict[int, np.ndarray] = {0: first_frame}
+        per_frame_candidates: dict[int, list[dict]] = defaultdict(list)
+        next_start = 0
+        idx = 0
+        last_frame = first_frame
 
-        for start in range(0, n, self.step):
-            triplet_indices = [min(start + k, n - 1) for k in range(3)]
-            triplet_frames = [frames_bgr[i] for i in triplet_indices]
+        while True:
+            while next_start + 2 <= idx:
+                triplet_indices = [next_start, next_start + 1, next_start + 2]
+                triplet_frames = [frame_buffer[i] for i in triplet_indices]
+                hms = self.detect_heatmap(triplet_frames, trans=trans)  # (3, 288, 512)
+                for k, fidx in enumerate(triplet_indices):
+                    cands = postprocess_heatmap(hms[k], trans_inv, threshold=score_threshold)
+                    per_frame_candidates[fidx].extend(cands)
+                next_start += self.step
+
+                # Frames before the next window start are no longer needed.
+                obsolete = [k for k in frame_buffer.keys() if k < next_start]
+                for k in obsolete:
+                    del frame_buffer[k]
+
+            ret, frame = video.read()
+            if not ret or frame is None:
+                break
+            idx += 1
+            frame_buffer[idx] = frame
+            last_frame = frame
+
+        n = idx + 1
+
+        # Tail windows: pad with the last frame, same behavior as min(start+k, n-1).
+        while next_start < n:
+            triplet_indices = [next_start, min(next_start + 1, n - 1), min(next_start + 2, n - 1)]
+            triplet_frames: list[np.ndarray] = []
+            for fidx in triplet_indices:
+                fr = frame_buffer.get(fidx)
+                if fr is None:
+                    fr = last_frame if fidx == (n - 1) else frame_buffer[max(frame_buffer.keys())]
+                triplet_frames.append(fr)
+
             hms = self.detect_heatmap(triplet_frames, trans=trans)  # (3, 288, 512)
-
             for k, fidx in enumerate(triplet_indices):
                 cands = postprocess_heatmap(hms[k], trans_inv, threshold=score_threshold)
                 per_frame_candidates[fidx].extend(cands)
+            next_start += self.step
 
         max_disp = max_disp_ratio * max(h, w)
         tracker = SimpleTracker(max_disp=max_disp)
         ball_detections: dict[int, Ball] = {}
-        for frame_id, cands in enumerate(per_frame_candidates):
+        for frame_id in range(n):
+            cands = per_frame_candidates.get(frame_id, [])
             best = tracker.update(cands)
             if best is not None:
                 x, y = best["xy"]
