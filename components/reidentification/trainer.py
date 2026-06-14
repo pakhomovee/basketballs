@@ -12,6 +12,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from common.utils.utils import get_device
 from .dataset import PKSampler, SynergyReIDDataset, build_train_transform
 from .evaluate import evaluate
 from .losses import ArcFaceLoss, TripletLoss
@@ -181,9 +182,10 @@ def train(
     p: int = 16,
     k: int = 4,
     lr: float = 3.5e-4,
-    device: str = "cuda",
+    device: str | None = None,
 ) -> ReIDModel:
     """Train a ReID model on SynergyReID data."""
+    device = device or get_device()
     data_root = Path(data_root)
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -267,12 +269,13 @@ if __name__ == "__main__":
     parser.add_argument("--p", type=int, default=16, help="Identities per batch")
     parser.add_argument("--k", type=int, default=4, help="Images per identity per batch")
     parser.add_argument("--lr", type=float, default=3.5e-4)
-    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--device", default=None, help="Compute device (auto-detected when omitted)")
     parser.add_argument("--log_level", default="INFO")
     args = parser.parse_args()
 
     _configure_logging(args.log_level)
-    logger.info("Starting ReID training: data_root=%s device=%s epochs=%d", args.data_root, args.device, args.epochs)
+    device = args.device or get_device()
+    logger.info("Starting ReID training: data_root=%s device=%s epochs=%d", args.data_root, device, args.epochs)
 
     train(
         data_root=args.data_root,
@@ -281,5 +284,5 @@ if __name__ == "__main__":
         p=args.p,
         k=args.k,
         lr=args.lr,
-        device=args.device,
+        device=device,
     )

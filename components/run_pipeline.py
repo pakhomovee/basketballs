@@ -3,14 +3,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, Any
+from typing import Protocol, Any, Literal
 
 from ball_detector.detector import WASBBallDetector
 from court_detector.court_detector import CourtDetector
 from detector import Detector, enrich_detections_with_numbers, enrich_players_with_pose, get_video_rim_detections
 from detector.enrich import propagate_track_numbers
 from actions.ball_possession import BallPossession
-from common.classes import CourtType, ShotEvent
+from common.classes import CourtType, ShotEvent, Ball, PlayersDetections, PossessionSegment, PassEvent
 from common.utils.models import ensure_models, get_model_paths
 from common.utils.utils import get_device
 from reidentification import extract_reid_embeddings
@@ -46,22 +46,22 @@ class NullStageLogger:
 
 @dataclass(frozen=True)
 class PipelineResult:
-    players_detections: Any
-    ball_detections: dict[int, list[Any]]
-    possession_segments: Any
-    pass_events: Any
+    players_detections: PlayersDetections
+    ball_detections: dict[int, list[Ball]]
+    possession_segments: list[PossessionSegment]
+    pass_events: list[PassEvent]
     shot_events: list[ShotEvent]
     court_type: CourtType
     video_fps: float
-    frame_width: float | None
+    frame_width: int | None
     video_meta: dict[str, Any]
 
 
 def run_pipeline(
     video_path: str,
     cfg: AppConfig,
-    stage_logger: Any = None,
-    tracker_type: str = "flow",
+    stage_logger: StageLogger | None = None,
+    tracker_type: Literal["flow", "hungarian", "appearance"] = "flow",
 ) -> PipelineResult:
     """
     Run the full analytics pipeline (shared by CLI and web backend).

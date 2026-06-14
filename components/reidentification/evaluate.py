@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 
+from common.utils.utils import get_device
 from .dataset import QueryGalleryDataset
 from .model import ReIDModel
 
@@ -92,10 +93,11 @@ def evaluate(
     query_dir: str | Path,
     gallery_dir: str | Path,
     *,
-    device: str = "cuda",
+    device: str | None = None,
     batch_size: int = 128,
     num_workers: int = 4,
 ) -> dict[str, float]:
+    device = device or get_device()
     query_loader = _create_eval_loader(query_dir, batch_size=batch_size, num_workers=num_workers)
     gallery_loader = _create_eval_loader(gallery_dir, batch_size=batch_size, num_workers=num_workers)
 
