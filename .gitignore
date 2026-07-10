@@ -1,64 +1,17 @@
-# Build artefacts & caches
-.cache/
-*.detections_cache.*.pkl
-*.detections_cache.pkl
-*.embeddings_cache.*.pkl
-bazel-*
-*.pyc
-__pycache__/
-*.lock
-
-# Editor / OS
-.vscode/
+# OS / editor
 .DS_Store
-.venv
+.vscode/
+.idea/
+.venv/
 
-# Models & media (large binaries)
-models/
-*mp4
-!dataset/sample.mp4
-*pt
-*zip
-*out
+# Python caches (from local tooling, if any)
+__pycache__/
+*.pyc
 
-# Dataset directories
-dataset/__MACOSX/
-dataset/teamtrack*
-dataset/deepsport
-dataset/data_reid
-dataset/basketball*
-dataset/team_clustering_benchmark/
-dataset/tracking_benchmark/
-dataset/tracking_long_benchmark/
-components/court_detector/dataset
-components/court_detector/runs
-components/court_detector/yolo_combined_data
-components/court_detector/annotated
-components/court_detector/benchmark_results
-components/tracking/tracking
-components/shot_detector/dataset_features/
-components/shot_detector/trained_model/
-components/shot_detector/dataset/data/
-components/shot_detector/dataset/tmp/
-components/shot_detector/dataset/annotations.json
-components/shot_detector/dataset/dataset.csv
+# Node / misc (not used by the static site, but harmless to ignore)
+node_modules/
+*.log
 
-# Data outputs
-data/
-output/
-
-# ---- Frontend ----
-components/web/frontend/node_modules/
-components/web/frontend/.svelte-kit/
-components/web/frontend/build/
-components/web/frontend/package-lock.json
-
-# Root-level components tooling (prettier etc.)
-components/node_modules/
-components/package-lock.json
-
-# Runtime storage (SQLite DB, uploaded videos, generated annotations)
-components/web/storage/
-
-# Development helper scripts (not needed in repo – run locally)
-roadmap.md
+# Broadcast clip videos are NOT committed (third-party copyright).
+# They are supplied at deploy time (e.g. uploaded to the host directly).
+data/*/video.mp4

@@ -1,174 +1,72 @@
-# Basketballs — Automatic Basketball Match Analysis
+# Basketballs — Demo Web Viewer
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
-[![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)]()
-[![Python](https://img.shields.io/badge/python-3.10+-blue)]()
-[![Node](https://img.shields.io/badge/node-20.x-green)]()
-[![Platform](https://img.shields.io/badge/platform-linux--macOS-lightgrey)]()
+A **zero-build, read-only** website that plays pre-annotated basketball clips with
+an interactive canvas overlay of the analysis pipeline's outputs — bounding boxes,
+segmentation masks, pose skeletons, the ball, track/jersey numbers, player IDs —
+plus a game-state sidebar (possession, passes, shots). Every overlay layer can be
+toggled on and off.
 
----
+There is **no backend and no build step** — it is plain HTML/CSS/JS served as
+static files.
 
-## Overview
+> This `demo-website` branch contains only the standalone viewer. The full
+> computer-vision pipeline that produces the annotations lives on the `main`
+> branch.
 
-This project implements an automatic basketball match analysis system based on computer vision techniques. The system processes a single broadcast-style video stream and extracts structured information about the game.
+## Run it
 
-The pipeline includes detection, tracking, spatial reconstruction, and high-level event recognition such as passes and shots. The result is a functional prototype that can support research in sports analytics, coaching tools, and enhanced broadcast visualization.
-
----
-
-## System Architecture
-
-![Pipeline Diagram](imgs/pipeline.png)
-
-*Figure: System pipeline overview.*
-
----
-
-## Components
-
-| Component         | Description                                                                                                                   |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Video Reader      | Reads input video and feeds frames into the pipeline sequentially.                                                            |
-| Court Detector    | Detects court keypoints and lines to establish scene geometry, enabling mapping from image space to court coordinates.        |
-| 2D Projector      | Applies the homography estimated by the Court Detector to convert image-space player positions to top-down court coordinates. |
-| Detector          | Detects all players and the ball in each frame, producing bounding boxes and confidence scores.                               |
-| Embedder          | Extracts appearance embeddings from detected bounding boxes to support re-identification across frames.                       |
-| Tracker           | Associates detections across frames to maintain consistent player tracks and IDs, using both motion and appearance cues.      |
-| Smoother          | Applies post-processing to tracking trajectories to reduce noise and temporal jitter.                                         |
-| Team Classifier   | Assigns each tracked player to one of the two teams based on appearance features.                                             |
-| Action Detector   | Recognizes basketball events (e.g., passes, shots) from tracking data and visual features.                                    |
-| Web Visualization | Renders outputs in an interactive web interface, including annotated video, minimap, and event timeline.                      |
-
----
-
-## Example Output
-
-![System Screenshot](imgs/interface.png)
-
----
-
-## Contributions
-
-| Author  | Contributions                                                                                                                  |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Evgenii | Tracker, Embedder, Team Assignment, Trajectory Smoothing                                                                       |
-| Alexey  | Multi-class Detector, Skeleton Estimation, Jersey Number Recognition, Number-to-Player Assignment, Possession & Pass Detection |
-| Anton   | Ball Detector, Court Detection, Shot Detection                                                                                 |
-| All     | Web Interface                                                                                                                  |
-
----
-
-## Demo
-
-Demo is available at [https://demo.basketballsproject.com](https://demo.basketballsproject.com)
-
----
-
-## Installation
-
-### Python Dependencies
+Because the page fetches JSON, open it through any static file server (not
+`file://`):
 
 ```bash
-pip3 install -r requirements.txt
+python3 -m http.server 8080
+# open http://localhost:8080/
 ```
 
-### Node.js (via nvm)
+That's it — no npm, no application server.
 
-```bash
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-source ~/.bashrc   # or ~/.zshrc
+## Layout
 
-nvm install 20
-nvm use 20
-
-node --version
+```
+.
+  index.html          # landing: overview + disclaimer + clip gallery
+  player.html         # the viewer (video + canvas + toggles + sidebar)
+  css/style.css
+  js/
+    draw.js           # canvas rendering of every overlay layer
+    home.js           # builds the gallery from data/manifest.json
+    player.js         # video↔annotation frame sync, controls, game state
+  data/
+    manifest.json     # list of clips shown on the landing page
+    nba-03/
+      video.mp4         # muted broadcast clip
+      annotations.json  # pipeline output for that clip
+    nba-17/ …
+    nba-20/ …
 ```
 
-### System Dependencies
+## Adding a clip
 
-```bash
-sudo apt-get install -y libgl1
-```
+Drop a muted `video.mp4` and its `annotations.json` into a new folder under
+`data/`, then add an entry to `data/manifest.json`:
 
----
-
-## Running the Project
-
-```bash
-./components/web/dev.sh
-```
-
----
-
-## Troubleshooting
-
-### npm Conflicts
-
-```bash
-cd components/web/frontend
-rm -rf node_modules package-lock.json
-npm install
-```
-
-### Backend Process Still Running
-
-```bash
-lsof -i :8000 # look for running processes
-kill -9 <pid>
-```
-
----
-
-## Self-Hosting with Nginx
-
-```nginx
-location / {
-    proxy_pass http://localhost:5173;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host localhost;
+```json
+{
+  "id": "nba-42",
+  "title": "NBA Clip 42",
+  "description": "…",
+  "video": "data/nba-42/video.mp4",
+  "annotations": "data/nba-42/annotations.json",
+  "available": true
 }
 ```
 
----
+The `annotations.json` uses the pipeline's export schema: a `metadata` block,
+a `frames` map keyed by frame index (`players`, `balls`), and `pass_events` /
+`shot_events` arrays. Set `"available": false` to show a clip as *Coming soon*
+(not clickable) until its files are in place.
 
-## License
+## Disclaimer
 
-Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)
-
----
-
-## Legal Notice
-
-The models, datasets, and associated materials (the “Materials”) are provided for limited, non-commercial research, educational, and academic use only.
-
-The dataset includes 16 NBA video clips, each approximately 7–11 seconds long, annotated with player tracking data and detections for benchmarking and evaluation.
-
-By using the Materials, you agree to the following:
-
-* The Materials may not be used for commercial or public distribution purposes
-* Redistribution to third parties is not permitted
-* Use must comply with applicable laws and intellectual property rights
-* No ownership of underlying video content is transferred
-
-The Materials are provided "as is", without warranties of any kind. The authors disclaim all liability for damages arising from their use.
-
----
-
-## Future Work
-
-* **Court Detection**
-  Transition to heatmap-based approaches with grid keypoints (similar to KaliCalib) is currently limited by the lack of homography annotations for NBA courts.
-
-* **Possession Detection**
-  Replace heuristic methods with sequential models (e.g., LSTM or Transformer) to capture long-term temporal dependencies and produce consistent possession trajectories.
-
-* **Shot Detection**
-  Incorporate visual context by cropping the hoop region and processing it with a pretrained CNN (e.g., ResNet), combined with MS-TCN embeddings to improve recognition of ambiguous shots.
-
-* **Motion Prediction**
-  Forecast optimal player trajectories using multi-agent interaction modeling, with potential applications for training and decision support.
-
-* **LLM-based Commentary**
-  Aggregate pipeline outputs (events, trajectories, possession) and generate natural-language commentary using a fine-tuned language model (e.g., LLaMA-3).
+The clips are provided strictly for research/educational purposes to showcase the
+pipeline. They are muted, used non-commercially, and must not be redistributed.

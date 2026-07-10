@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Basketballs — Pipeline Demo</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="stylesheet" href="css/style.css" />
+	</head>
+	<body>
+		<header class="topbar">
+			<div class="container topbar-inner">
+				<a class="brand" href="index.html"><span class="dot">●</span> Basketballs</a>
+				<span class="spacer"></span>
+				<a class="back" href="https://github.com/" target="_blank" rel="noopener">Project</a>
+			</div>
+		</header>
+
+		<main class="container">
+			<section class="hero">
+				<h1>Automatic Basketball Match Analysis</h1>
+				<p class="lead">
+					A computer-vision pipeline that turns a single broadcast-style video stream into
+					structured game data — player detection &amp; tracking, team assignment, pose
+					skeletons, ball tracking, jersey-number recognition, and high-level events such as
+					passes and shots. This is a read-only demo viewer: pick a clip and toggle the
+					annotation layers on top of the video.
+				</p>
+			</section>
+
+			<div class="section-title">Pipeline stages</div>
+			<div class="chips">
+				<span class="chip">Court Detection</span>
+				<span class="chip">Player &amp; Ball Detection</span>
+				<span class="chip">Appearance Embedding</span>
+				<span class="chip">Tracking &amp; Re-ID</span>
+				<span class="chip">Trajectory Smoothing</span>
+				<span class="chip">Team Classification</span>
+				<span class="chip">Pose Estimation</span>
+				<span class="chip">Jersey Numbers</span>
+				<span class="chip">Passes &amp; Shots</span>
+			</div>
+
+			<div class="section-title">Demo clips</div>
+			<div class="gallery" id="gallery">
+				<!-- cards injected by home.js -->
+			</div>
+
+			<div class="disclaimer">
+				<strong>Disclaimer.</strong> The video clips shown here are provided strictly for
+				research and educational purposes to showcase this computer-vision pipeline. They were
+				downloaded from NBA broadcast footage, stripped of all audio, and are used
+				non-commercially for demonstration only. No ownership of the underlying video content is
+				claimed or transferred, and the clips may not be redistributed or used commercially.
+			</div>
+		</main>
+
+		<footer class="site">
+			<div class="container">
+				Basketballs — read-only pipeline demo · videos muted &amp; for research use only.
+			</div>
+		</footer>
+
+		<script type="module" src="js/home.js"></script>
+	</body>
+</html>

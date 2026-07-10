@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Viewer — Basketballs</title>
+		<link rel="stylesheet" href="css/style.css" />
+	</head>
+	<body>
+		<header class="topbar">
+			<div class="container topbar-inner">
+				<a class="brand" href="index.html"><span class="dot">●</span> Basketballs</a>
+				<span class="spacer"></span>
+				<a class="back" href="index.html">← All clips</a>
+			</div>
+		</header>
+
+		<main class="container player-wrap">
+			<div class="player-head">
+				<h1 id="title">Loading…</h1>
+				<span class="meta" id="meta"></span>
+			</div>
+
+			<div class="player-layout">
+				<!-- left: video + controls + toggles -->
+				<div class="player-main">
+					<div class="stage" id="stage">
+						<video id="video" muted playsinline preload="auto"></video>
+						<canvas id="overlay"></canvas>
+						<div class="msg" id="msg" hidden></div>
+					</div>
+
+					<!-- playback controls -->
+					<div class="controls">
+						<button class="iconbtn" id="playBtn" aria-label="Play/Pause">
+							<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+								<polygon points="5,3 19,12 5,21" />
+							</svg>
+						</button>
+						<span class="time" id="time">0:00 / 0:00</span>
+						<input class="seek" id="seek" type="range" min="0" max="1000" value="0" step="1" />
+						<button class="stepbtn" id="prevFrame" title="Previous frame (←)">◄ frame</button>
+						<button class="stepbtn" id="nextFrame" title="Next frame (→)">frame ►</button>
+						<span class="framecount" id="framecount">F0</span>
+						<div class="rates" id="rates"></div>
+					</div>
+
+					<!-- annotation-layer toggles -->
+					<div class="toggles" id="toggles"></div>
+
+					<p class="player-note" id="note"></p>
+				</div>
+
+				<!-- right: game state -->
+				<aside class="sidebar">
+					<div class="panel-title">Game state</div>
+
+					<!-- possession -->
+					<div class="possession" id="possession">
+						<span class="poss-icon">🏀</span>
+						<span class="poss-label">Ball</span>
+						<span class="poss-owner" id="possOwner">—</span>
+					</div>
+
+					<!-- stat tiles -->
+					<div class="stats" id="stats">
+						<div class="stat"><span class="stat-num" id="statPasses">0</span><span class="stat-lbl">Passes</span></div>
+						<div class="stat"><span class="stat-num" id="statShots">0</span><span class="stat-lbl">Shots</span></div>
+						<div class="stat"><span class="stat-num" id="statMakes">0</span><span class="stat-lbl">Makes</span></div>
+					</div>
+
+					<!-- event timeline -->
+					<div class="panel-subtitle">Events</div>
+					<div class="events" id="events"></div>
+				</aside>
+			</div>
+		</main>
+
+		<footer class="site">
+			<div class="container">
+				Video is muted and shown for research/demonstration only. Use ← / → to step frames.
+			</div>
+		</footer>
+
+		<script type="module" src="js/player.js"></script>
+	</body>
+</html>

@@ -1,0 +1,28 @@
+{
+  "videos": [
+    {
+      "id": "nba-03",
+      "title": "NBA Clip 03",
+      "description": "Broadcast possession with tracked players, ball, poses, passes and a made shot.",
+      "video": "data/nba-03/video.mp4",
+      "annotations": "data/nba-03/annotations.json",
+      "available": true
+    },
+    {
+      "id": "nba-17",
+      "title": "NBA Clip 17",
+      "description": "Broadcast possession annotated with the full pipeline output.",
+      "video": "data/nba-17/video.mp4",
+      "annotations": "data/nba-17/annotations.json",
+      "available": true
+    },
+    {
+      "id": "nba-20",
+      "title": "NBA Clip 20",
+      "description": "Broadcast possession annotated with the full pipeline output.",
+      "video": "data/nba-20/video.mp4",
+      "annotations": "data/nba-20/annotations.json",
+      "available": true
+    }
+  ]
+}
